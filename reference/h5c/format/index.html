@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>h5c / FORMAT — h5</title>
+<link rel="stylesheet" href="../../../assets/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href="../../.././">h5</a>
+    <nav>
+      <a href="../../.././">はじめに</a>
+      <a href="../../../install/">インストール</a>
+      <a href="../../../usage/">使い方</a>
+      <a href="../../../visualization/">可視化</a>
+      <a href="../../../reference/" aria-current="page">リファレンス</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+<p>出典：<code>h5c/docs/FORMAT.md</code></p><div class="reference"><h1 id="hdf5-ファイル形式">HDF5 ファイル形式</h1>
+<p>h5c・h5cpp・h5fortran と h5xdmf が共有する保存形式です。
+C API の呼び方は <a href="../usage/">USAGE.md</a>、可視化の出力手順は
+<a href="../usage-visualization/">USAGE-visualization.md</a> を参照してください。</p>
+<h2 id="次元順序">次元順序</h2>
+<p>h5c の <code>dims</code> は row-major で、最後の次元が最も高速に変化します。
+Fortran の配列 <code>a(nx, ny)</code> に対応する C/C++ の shape は <code>{ny, nx}</code> です。</p>
+<pre><code class="language-text">Fortran: real(real64) :: a(2, 3)   ! 値 1..6 を reshape で格納
+HDF5:    shape = (3, 2)
+         (0,0): 1, 2
+         (1,0): 3, 4
+         (2,0): 5, 6
+</code></pre>
+<p>h5c に渡す配列の添字と shape は次のように対応します。</p>
+<pre><code class="language-text">dims = {d0, d1, d2}
+flat index = (i0 * d1 + i1) * d2 + i2
+</code></pre>
+<h2 id="データ型">データ型</h2>
+<p>数値はリトルエンディアンで保存します。</p>
+<table>
+<thead>
+<tr>
+<th>h5c の型</th>
+<th>ファイル上の型</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>H5C_F32</code> / <code>H5C_F64</code></td>
+<td><code>H5T_IEEE_F32LE</code> / <code>H5T_IEEE_F64LE</code></td>
+</tr>
+<tr>
+<td><code>H5C_I8</code> / <code>H5C_I16</code></td>
+<td><code>H5T_STD_I8LE</code> / <code>H5T_STD_I16LE</code></td>
+</tr>
+<tr>
+<td><code>H5C_I32</code> / <code>H5C_I64</code></td>
+<td><code>H5T_STD_I32LE</code> / <code>H5T_STD_I64LE</code></td>
+</tr>
+<tr>
+<td><code>H5C_BOOL</code></td>
+<td><code>H5T_STD_I8LE</code> 基底の enum（<code>FALSE=0</code>, <code>TRUE=1</code>）</td>
+</tr>
+<tr>
+<td><code>H5C_STRING</code></td>
+<td>固定長 <code>H5T_C_S1</code>（SPACEPAD）。可変長も選択可能</td>
+</tr>
+</tbody>
+</table>
+<p>bool は 1 要素 1 バイトで、h5dump では <code>TRUE</code> / <code>FALSE</code>、h5py では
+<code>np.bool_</code> として読めます。h5fortran の <code>logical</code> と相互に読み書きでき、
+h5fortran が整数で保存した logical も h5c で読み込めます。</p>
+<p>固定長文字列は h5fortran と相互運用できます。可変長文字列は h5c で読み書き
+できますが、h5fortran では読めません。</p>
+<p>real128 は h5c では非対応です。その dataset の型を問い合わせると
+<code>H5C_TYPE_UNKNOWN</code> になります。</p>
+<h2 id="数値配列属性">数値配列属性</h2>
+<p>数値配列属性は長さ <code>count</code> の 1 次元 dataspace に、dataset と同じ型で保存します。
+h5fortran と相互運用できます。短い数値ベクトルに使い、大きなデータは dataset にします。</p>
+<h2 id="parallel-の分割レイアウト">Parallel の分割レイアウト</h2>
+<p>パス <code>P</code> は group になり、次の dataset を持ちます。</p>
+<pre><code class="language-text">P/data             全ランクのデータを分割軸方向に連結したもの
+P/__partition__    ランク境界を表す int64 配列、長さ nprocs + 1
+</code></pre>
+<p>分割軸はファイル上の第 0 次元（Fortran では最終次元）です。
+複数次元の同時分割は表現しません。</p>
+<pre><code class="language-text">__partition__[0]       == 0
+ランク r の開始位置    == __partition__[r]
+ランク r の行数        == __partition__[r+1] - __partition__[r]
+__partition__[nprocs]  == data の第 0 次元の長さ
+</code></pre>
+<p>境界は単調非減少で、行数 0 も表現できます。
+担当範囲の取得と読み込み条件は <a href="../usage/#parallel-io">並列 API</a> を参照してください。</p>
+<h2 id="多成分フィールド">多成分フィールド</h2>
+<p>多成分の値は <code>[n, ncomp]</code> にインターリーブして保存します。
+Fortran の <code>field(ncomp, n)</code> と同じ配置で、XDMF の Vector / Tensor に対応します。</p>
+<table>
+<thead>
+<tr>
+<th>成分数</th>
+<th>可視化フィールドの <code>attribute_type</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>Scalar</code>（dataset は 1 次元）</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>Vector</code></td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>Tensor6</code></td>
+</tr>
+<tr>
+<td>9</td>
+<td><code>Tensor</code></td>
+</tr>
+<tr>
+<td>その他</td>
+<td>属性なし</td>
+</tr>
+</tbody>
+</table>
+<p>Tensor6 は ParaView の対称テンソル規約 <strong><code>XX, YY, ZZ, XY, YZ, XZ</code></strong> の順です。
+h5xdmf は成分を並べ替えません。</p>
+<h2 id="可視化レイアウト">可視化レイアウト</h2>
+<p><code>scheme_version = 1</code> の形式です。逐次・並列とも同じ配置になります。</p>
+<pre><code class="language-text">/                              attrs: scheme_version=1 (i32), time (f64)
+/&lt;mesh&gt;/                       attrs: topology_type (固定長文字列), nodes_per_element (i32)
+/&lt;mesh&gt;/geometry/nodes         (total_points, 3)
+/&lt;mesh&gt;/geometry/connectivity  (total_cells, nodes_per_element)   PolyData では無し
+/&lt;mesh&gt;/point_data/&lt;field&gt;     (total_points[, ncomp])
+/&lt;mesh&gt;/cell_data/&lt;field&gt;      (total_cells[, ncomp])
+</code></pre>
+<p>各 field の <code>attribute_type</code> は <a href="#多成分フィールド">多成分フィールド</a> に従います。
+connectivity はファイル全体の 0-origin 節点番号です。
+geometry は f32/f64、connectivity は i8/i16/i32/i64、field はこれらの数値型に対応します。</p>
+<p>1 ファイルに複数 mesh を保存できます。h5xdmf は mesh ごとに XDMF を生成します。
+<code>scheme_version</code> はライブラリの製品バージョンとは独立しています。
+ファイルを読む際は root の <code>scheme_version</code> 属性で形式を確認してください。</p></div>
+</main>
+
+<footer>
+  h5fortran · h5c · h5cpp · h5xdmf
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>h5 — HDF5 出力ライブラリ</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href=".././">h5</a>
+    <nav>
+      <a href=".././">はじめに</a>
+      <a href="../install/">インストール</a>
+      <a href="../usage/" aria-current="page">使い方</a>
+      <a href="../visualization/">可視化</a>
+      <a href="../reference/">リファレンス</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+
+<h1>使い方</h1>
+<p class="lede">次元順序を確認してから、目的に合うコードを選びます。言語の選択はページ全体に適用され、次回も記憶されます。JavaScript が無効でも全言語を読めます。</p>
+<section id="dims">
+<h2>配列の次元順序</h2>
+<p><strong>Fortran の <code>a(nx, ny)</code> と C の <code>dims = {ny, nx}</code> は、同じファイル内の同じバイト列を表します。</strong>Fortran は最初の添字、C/C++ は最後の添字が最も速く変わります。次元の表記を逆順に対応させるだけで、転置も、そのためのコピーも不要です。</p>
+<p><a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/FORMAT.md">h5c/docs/FORMAT.md</a> 冒頭の h5dump による確認結果は次のとおりです。Fortran の <code>(2, 3)</code> がファイル上では <code>(3, 2)</code> になり、値の順序は変わりません。</p>
+<pre><code>Fortran: real(real64) :: a(2, 3)   ! 値 1..6 を reshape で格納
+HDF5:    shape = (3, 2)
+         (0,0): 1, 2
+         (1,0): 3, 4
+         (2,0): 5, 6</code></pre>
+<p>下の実コードも同じ 6 要素の配置です。</p>
+<div class="langs">
+<div class="langs-bar" role="tablist" aria-label="次元順序の言語">
+<button type="button" role="tab" id="dims-fortran-tab" data-lang="fortran" aria-controls="dims-fortran" aria-selected="true">Fortran</button>
+<button type="button" role="tab" id="dims-c-tab" data-lang="c" aria-controls="dims-c" aria-selected="false">C</button>
+<button type="button" role="tab" id="dims-cpp-tab" data-lang="cpp" aria-controls="dims-cpp" aria-selected="false">C++</button>
+</div>
+<div class="langs-panel" role="tabpanel" id="dims-fortran" data-lang="fortran" aria-labelledby="dims-fortran-tab" tabindex="0">
+<p>Fortran — 2 次元配列を初期化します。</p>
+<pre><code>use, intrinsic :: iso_fortran_env, only: real64
+implicit none
+real(real64) :: values(2, 3)
+
+values = reshape([1.0_real64, 2.0_real64, 3.0_real64, &amp;
+                  4.0_real64, 5.0_real64, 6.0_real64], shape(values))</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5fortran/blob/main/test/test-serial.F90"><code>h5fortran/test/test-serial.F90</code></a>。</p>
+</div>
+<div class="langs-panel" role="tabpanel" id="dims-c" data-lang="c" aria-labelledby="dims-c-tab" tabindex="0">
+<p>C — 平坦なバッファとファイル上の shape。</p>
+<pre><code>const double values[6] = { 1, 2, 3, 4, 5, 6 };
+const size_t dims[2]   = { 3, 2 };</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5c/blob/main/example/serial/main.c"><code>h5c/example/serial/main.c</code>（完全なプログラム）</a>。</p>
+</div>
+<div class="langs-panel" role="tabpanel" id="dims-cpp" data-lang="cpp" aria-labelledby="dims-cpp-tab" tabindex="0">
+<p>C++ — C と同じ次元順序。</p>
+<pre><code>const std::vector&lt;double&gt; values = { 1, 2, 3, 4, 5, 6 };
+const h5cpp::shape        dims   = { 3, 2 };</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5cpp/blob/main/example/serial/main.cpp"><code>h5cpp/example/serial/main.cpp</code>（完全なプログラム）</a>。</p>
+</div>
+</div>
+</section>
+<p>以下は操作ごとのコード例です。配列の宣言・初期化は用途に合わせて用意してください。各コード下のリンクは、関連する実装例を調べるための参考です。</p>
+<section id="task-1">
+<h2 id="write">1. ファイルを開いて配列を書く</h2>
+<p>新規作成モードは同名ファイルを切り詰めます。保存先を確認してください。</p>
+<div class="langs">
+<div class="langs-bar" role="tablist" aria-label="タスク 1の言語">
+<button type="button" role="tab" id="task-1-fortran-tab" data-lang="fortran" aria-controls="task-1-fortran" aria-selected="true">Fortran</button>
+<button type="button" role="tab" id="task-1-c-tab" data-lang="c" aria-controls="task-1-c" aria-selected="false">C</button>
+<button type="button" role="tab" id="task-1-cpp-tab" data-lang="cpp" aria-controls="task-1-cpp" aria-selected="false">C++</button>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-1-fortran" data-lang="fortran" aria-labelledby="task-1-fortran-tab" tabindex="0">
+<p>Fortran — 主要部分の抜粋です。</p>
+<pre><code>call h5open_f(hdferr)
+if (hdferr /= 0) error stop &quot;h5open_f failed&quot;
+call h5fcreate_f(&quot;serial.h5&quot;, H5F_ACC_TRUNC_F, file_id, hdferr)
+if (hdferr /= 0) error stop &quot;h5fcreate_f failed&quot;
+
+call h5fort_swrite(file_id, &quot;/values&quot;, values, hdferr)
+if (hdferr /= 0) error stop &quot;h5fort_swrite failed&quot;
+
+call h5fclose_f(file_id, hdferr)
+if (hdferr /= 0) error stop &quot;h5fclose_f failed&quot;
+call h5close_f(hdferr)
+if (hdferr /= 0) error stop &quot;h5close_f failed&quot;</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5fortran/blob/main/example/serial/main.F90"><code>h5fortran/example/serial/main.F90</code>（完全なプログラム）</a>。</p>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-1-c" data-lang="c" aria-labelledby="task-1-c-tab" tabindex="0">
+<p>C — 書き込み後は全体コードの <code>h5c_file_status</code> と <code>h5c_close</code> の戻り値を確認します。</p>
+<pre><code>if (failed(&quot;open&quot;, h5c_open(path, H5C_TRUNCATE, &amp;f))) {
+    return 1;
+}
+
+h5c_write_f64(f, &quot;/mesh/coords&quot;, values, 2, dims);</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5c/blob/main/example/serial/main.c"><code>h5c/example/serial/main.c</code>（完全なプログラム）</a>。</p>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-1-cpp" data-lang="cpp" aria-labelledby="task-1-cpp-tab" tabindex="0">
+<p>C++ — 型と要素数はコンテナから取得します。</p>
+<pre><code>h5cpp::file f(path, h5cpp::mode::truncate);
+
+f.write(&quot;/mesh/coords&quot;, values, dims);
+
+f.close();</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5cpp/blob/main/example/serial/main.cpp"><code>h5cpp/example/serial/main.cpp</code>（完全なプログラム）</a>。</p>
+<p class="note">RAII によりスコープ終了時に閉じます。デストラクタは例外を投げないため、書き込みの終了エラーを検出するには明示的に <code>close()</code> を呼びます。</p>
+</div>
+</div>
+</section>
+<section id="task-2">
+<h2 id="read">2. 配列を読む</h2>
+<p>保存された shape に合う受け取り先を用意します。</p>
+<div class="langs">
+<div class="langs-bar" role="tablist" aria-label="タスク 2の言語">
+<button type="button" role="tab" id="task-2-fortran-tab" data-lang="fortran" aria-controls="task-2-fortran" aria-selected="true">Fortran</button>
+<button type="button" role="tab" id="task-2-c-tab" data-lang="c" aria-controls="task-2-c" aria-selected="false">C</button>
+<button type="button" role="tab" id="task-2-cpp-tab" data-lang="cpp" aria-controls="task-2-cpp" aria-selected="false">C++</button>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-2-fortran" data-lang="fortran" aria-labelledby="task-2-fortran-tab" tabindex="0">
+<p>Fortran — <code>fields.h5</code> の 1 次元の圧力と 2 次元の座標を読みます。</p>
+<pre><code>use hdf5
+use h5fort, only: h5fort_sread
+use, intrinsic :: iso_fortran_env, only: real64
+implicit none
+integer(hid_t) :: file_id
+integer :: hdferr
+real(real64), allocatable :: pressure(:), coords(:, :)
+
+call h5open_f(hdferr)
+if (hdferr /= 0) error stop &quot;HDF5 の初期化に失敗&quot;
+call h5fopen_f(&quot;fields.h5&quot;, H5F_ACC_RDONLY_F, file_id, hdferr)
+if (hdferr /= 0) error stop &quot;ファイルを開けません&quot;
+call h5fort_sread(file_id, &quot;/pressure&quot;, pressure, hdferr)
+if (hdferr /= 0) error stop &quot;圧力の読み込みに失敗&quot;
+call h5fort_sread(file_id, &quot;/coords&quot;, coords, hdferr)
+if (hdferr /= 0) error stop &quot;座標の読み込みに失敗&quot;
+call h5fclose_f(file_id, hdferr)
+if (hdferr /= 0) error stop &quot;ファイルを閉じられません&quot;
+call h5close_f(hdferr)
+if (hdferr /= 0) error stop &quot;HDF5 の終了に失敗&quot;</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5fortran/blob/main/test/test-serial.F90"><code>h5fortran/test/test-serial.F90</code></a>。</p>
+<p class="note"><code>h5fort_sread</code> は保存された shape に合わせて allocatable 配列を確保します。</p>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-2-c" data-lang="c" aria-labelledby="task-2-c-tab" tabindex="0">
+<p>C — 全体コードでは先に <code>H5C_READ</code> で開き、読み込み後に <code>free(got)</code> で解放します。</p>
+<pre><code>if (failed(&quot;info&quot;, h5c_dataset_info(f, &quot;/mesh/coords&quot;, &amp;info))) {
+    h5c_close(f);
+    return 1;
+}
+
+got = (double *)malloc(info.count * sizeof *got);
+if (got == NULL) {
+    h5c_close(f);
+    return 1;
+}
+
+if (failed(&quot;read&quot;, h5c_read_f64(f, &quot;/mesh/coords&quot;, got,
+                                info.rank, info.dims))) {
+    free(got);
+    h5c_close(f);
+    return 1;
+}</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5c/blob/main/example/serial/main.c"><code>h5c/example/serial/main.c</code>（完全なプログラム）</a>。</p>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-2-cpp" data-lang="cpp" aria-labelledby="task-2-cpp-tab" tabindex="0">
+<p>C++ — 保存 shape に合わせて読み込みます。</p>
+<pre><code>h5cpp::file f(path, h5cpp::mode::read);
+
+const std::vector&lt;double&gt; got = f.read&lt;double&gt;(&quot;/mesh/coords&quot;);</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5cpp/blob/main/example/serial/main.cpp"><code>h5cpp/example/serial/main.cpp</code>（完全なプログラム）</a>。</p>
+<p class="note"><code>read&lt;T&gt;()</code> は必要な長さの <code>std::vector</code> を返します。失敗は <code>h5cpp::error</code> 例外です。全体コードの catch を参照してください。</p>
+</div>
+</div>
+</section>
+<section id="task-3">
+<h2 id="viz">3. 可視化用に出力する</h2>
+<p>メッシュ・座標・物理量・時刻を HDF5 に記録します。1 ステップ 1 ファイルで出力し、<a href="../visualization/">h5xdmf で XDMF に変換して ParaView で開きます</a>。</p>
+<div class="langs">
+<div class="langs-bar" role="tablist" aria-label="タスク 3の言語">
+<button type="button" role="tab" id="task-3-fortran-tab" data-lang="fortran" aria-controls="task-3-fortran" aria-selected="true">Fortran</button>
+<button type="button" role="tab" id="task-3-c-tab" data-lang="c" aria-controls="task-3-c" aria-selected="false">C</button>
+<button type="button" role="tab" id="task-3-cpp-tab" data-lang="cpp" aria-controls="task-3-cpp" aria-selected="false">C++</button>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-3-fortran" data-lang="fortran" aria-labelledby="task-3-fortran-tab" tabindex="0">
+<p>Fortran — 四面体メッシュと節点データ。逐次の writer は <code>t_hdf5_writer</code> です（並列は <code>t_phdf5_writer</code>、<a href="#parallel-viz">タスク 6</a>）。</p>
+<pre><code>type(t_hdf5_writer) :: fluid
+
+fluid%h5_filepath = trim(filename)
+fluid%output_type = &quot;UnstructuredGrid&quot;
+fluid%mesh_name = &quot;fluid&quot;
+fluid%topology_type = &quot;Tetrahedron&quot;
+fluid%nodes_per_element = 4
+fluid%num_points = fluid_points
+fluid%num_cells = fluid_cells
+fluid%time = time
+call fluid%init()
+call fluid%write_geometry(fluid_nodes, fluid_connectivity)
+call fluid%write_point_data(pressure, &quot;Pressure&quot;)
+call fluid%write_point_data(velocity, &quot;Velocity&quot;)
+
+call fluid%close()</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5fortran/blob/main/example/serial-viz/main.F90"><code>h5fortran/example/serial-viz/main.F90</code>（完全なプログラム）</a>。</p>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-3-c" data-lang="c" aria-labelledby="task-3-c-tab" tabindex="0">
+<p>C — この抜粋の前に mesh の種類・名前・節点数・要素数を設定します。実行前に <code>result/</code> を作成してください。</p>
+<pre><code>must(h5c_viz_open(path, t, &amp;viz), &quot;viz_open&quot;);
+
+must(h5c_viz_begin_mesh(viz, &amp;mesh), &quot;begin_mesh fluid&quot;);
+
+must(h5c_viz_write_nodes(viz, nodes, H5C_F64), &quot;write_nodes&quot;);
+must(h5c_viz_write_connectivity(viz, conn, H5C_I32), &quot;write_conn&quot;);
+
+must(h5c_viz_write_point_data(viz, &quot;Pressure&quot;, pressure, H5C_F64, 1),
+     &quot;point Pressure&quot;);</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5c/blob/main/example/serial-viz/main.c"><code>h5c/example/serial-viz/main.c</code>（完全なプログラム）</a>。</p>
+<p class="note"><code>must</code> はこの例のエラー確認関数です。全体コード末尾で status の確認と close を行います。</p>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-3-cpp" data-lang="cpp" aria-labelledby="task-3-cpp-tab" tabindex="0">
+<p>C++ — 三角形メッシュの例です。</p>
+<pre><code>h5cpp::viz writer(path, time);
+writer.begin_mesh({h5cpp::viz_kind::unstructured, &quot;fluid&quot;,
+                   &quot;Triangle&quot;, 3, x.size(), 2});
+writer.write_nodes&lt;double&gt;({x, y, z});
+writer.write_connectivity(connectivity);
+
+writer.write_point_data(&quot;Pressure&quot;, pressure);
+writer.write_point_data&lt;double&gt;(&quot;Velocity&quot;, {x, y, z});</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5cpp/blob/main/example/serial-viz/main.cpp"><code>h5cpp/example/serial-viz/main.cpp</code>（完全なプログラム）</a>。</p>
+<p class="note">成分別の <code>{x, y, z}</code> は <code>h5cpp::span</code> の非所有ビューとして渡します。ビュー自体は配列をコピーしません。呼び出し中は元の vector を有効に保ちます。</p>
+</div>
+</div>
+</section>
+<section id="task-4">
+<h2 id="parallel-write">4. 並列で書く</h2>
+<p>各ランクの局所配列を 1 ファイルに連結します。全ランクが同じ順序・同じパスで並列 API を呼びます。</p>
+<div class="note"><strong>分割軸はファイルの第 0 次元です。</strong>C/C++ では <code>dims[0]</code>、Fortran では配列の最終次元で、同じ軸を指します。他の次元の長さは全ランクで揃えます。パス P の下に <code>P/data</code> と <code>P/__partition__</code> が保存されます。後者は長さ nprocs + 1 の int64 境界配列で、ランク r は境界 r から r+1 の直前までを担当します。先頭は 0、末尾は data の第 0 次元の長さです。</div>
+<div class="langs">
+<div class="langs-bar" role="tablist" aria-label="タスク 4の言語">
+<button type="button" role="tab" id="task-4-fortran-tab" data-lang="fortran" aria-controls="task-4-fortran" aria-selected="true">Fortran</button>
+<button type="button" role="tab" id="task-4-c-tab" data-lang="c" aria-controls="task-4-c" aria-selected="false">C</button>
+<button type="button" role="tab" id="task-4-cpp-tab" data-lang="cpp" aria-controls="task-4-cpp" aria-selected="false">C++</button>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-4-fortran" data-lang="fortran" aria-labelledby="task-4-fortran-tab" tabindex="0">
+<p>Fortran — MPI と HDF5 の初期化後、MPI 用のファイルアクセス設定を渡します。</p>
+<pre><code>call h5pcreate_f(H5P_FILE_ACCESS_F, fapl_id, hdferr)
+call h5pset_fapl_mpio_f(fapl_id, MPI_COMM_WORLD, MPI_INFO_NULL, hdferr)
+call h5fcreate_f(&quot;parallel.h5&quot;, H5F_ACC_TRUNC_F, file_id, hdferr, access_prp=fapl_id)
+call h5pclose_f(fapl_id, hdferr)
+call h5fort_pwrite(file_id, &quot;/values&quot;, local_values, hdferr)
+if (hdferr /= 0) call MPI_Abort(MPI_COMM_WORLD, 1, ierr)</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5fortran/blob/main/example/parallel/main.F90"><code>h5fortran/example/parallel/main.F90</code>（完全なプログラム）</a>。</p>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-4-c" data-lang="c" aria-labelledby="task-4-c-tab" tabindex="0">
+<p>C — 全体コードでは <code>h5c_popen(path, H5C_TRUNCATE, &amp;f)</code> で開き、各戻り値を検査します。</p>
+<pre><code>nlocal  = (size_t)(2 + me);
+dims[0] = nlocal;   /* the split axis */
+dims[1] = 3;        /* must be the same on every rank */
+
+st = h5c_pwrite(f, &quot;/coords&quot;, local, H5C_F64, 2, dims, H5C_WRITE_DEFAULT);</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5c/blob/main/example/parallel/main.c"><code>h5c/example/parallel/main.c</code>（完全なプログラム）</a>。</p>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-4-cpp" data-lang="cpp" aria-labelledby="task-4-cpp-tab" tabindex="0">
+<p>C++ — ランクごとに異なる行数を渡します。</p>
+<pre><code>const std::size_t nlocal = static_cast&lt;std::size_t&gt;(2 + me);
+const h5cpp::shape dims = {nlocal, 3};  // dims[0] is the split axis
+
+h5cpp::parallel_file f(path, h5cpp::mode::truncate);
+f.write(&quot;/coords&quot;, local, dims);</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5cpp/blob/main/example/parallel/main.cpp"><code>h5cpp/example/parallel/main.cpp</code>（完全なプログラム）</a>。</p>
+<p class="note"><code>local</code> は <code>std::vector&lt;double&gt;</code> です。RAII の破棄・明示的な close は MPI の終了前に、全ランクで揃えて行います。</p>
+</div>
+</div>
+</section>
+<section id="task-5">
+<h2 id="parallel-read">5. 並列で読む</h2>
+<p>ここでは書き込み時と同じランク数で、保存された境界に従って各ランクの担当分を読み戻します。全ランクが同じ順序で呼び出してください。</p>
+<div class="langs">
+<div class="langs-bar" role="tablist" aria-label="タスク 5の言語">
+<button type="button" role="tab" id="task-5-fortran-tab" data-lang="fortran" aria-controls="task-5-fortran" aria-selected="true">Fortran</button>
+<button type="button" role="tab" id="task-5-c-tab" data-lang="c" aria-controls="task-5-c" aria-selected="false">C</button>
+<button type="button" role="tab" id="task-5-cpp-tab" data-lang="cpp" aria-controls="task-5-cpp" aria-selected="false">C++</button>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-5-fortran" data-lang="fortran" aria-labelledby="task-5-fortran-tab" tabindex="0">
+<p>Fortran — MPI と HDF5 の初期化後、<code>fields-parallel.h5</code> の <code>/pressure</code> と <code>/coords</code> から局所データを読みます。両パスは <code>h5fort_pwrite</code> で保存したものとします。</p>
+<pre><code>use hdf5
+use h5fort, only: h5fort_pread, h5fort_pread_fixed
+use mpi
+use, intrinsic :: iso_fortran_env, only: real64
+implicit none
+integer(hid_t) :: file_id, fapl_id
+integer :: hdferr, ierr
+real(real64), allocatable :: pressure(:), coords(:, :)
+real(real64), allocatable :: pressure_buffer(:), coords_buffer(:, :)
+
+call h5pcreate_f(H5P_FILE_ACCESS_F, fapl_id, hdferr)
+if (hdferr /= 0) call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+call h5pset_fapl_mpio_f(fapl_id, MPI_COMM_WORLD, MPI_INFO_NULL, hdferr)
+if (hdferr /= 0) call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+call h5fopen_f(&quot;fields-parallel.h5&quot;, H5F_ACC_RDONLY_F, file_id, hdferr, access_prp=fapl_id)
+if (hdferr /= 0) call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+call h5pclose_f(fapl_id, hdferr)
+if (hdferr /= 0) call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+call h5fort_pread(file_id, &quot;/pressure&quot;, pressure, hdferr)
+if (hdferr /= 0) call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+allocate(pressure_buffer(size(pressure)), stat=ierr)
+if (ierr /= 0) call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+call h5fort_pread_fixed(file_id, &quot;/pressure&quot;, pressure_buffer, hdferr)
+if (hdferr /= 0) call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+call h5fort_pread(file_id, &quot;/coords&quot;, coords, hdferr)
+if (hdferr /= 0) call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+allocate(coords_buffer(size(coords, 1), size(coords, 2)), stat=ierr)
+if (ierr /= 0) call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+call h5fort_pread_fixed(file_id, &quot;/coords&quot;, coords_buffer, hdferr)
+if (hdferr /= 0) call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+call h5fclose_f(file_id, hdferr)
+if (hdferr /= 0) call MPI_Abort(MPI_COMM_WORLD, 1, ierr)</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5fortran/blob/main/test/test-parallel.F90"><code>h5fortran/test/test-parallel.F90</code></a>。</p>
+<p class="note"><code>pread</code> は出力の allocatable 配列を確保し、<code>pread_fixed</code> は確保済み配列に読み込みます。ここでは最初の読み込みで局所 shape を取得してバッファを確保しています。局所 shape が分かっていれば、最初から確保済みのバッファを渡せます。ファイルを閉じた後に HDF5 と MPI を終了します。</p>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-5-c" data-lang="c" aria-labelledby="task-5-c-tab" tabindex="0">
+<p>C — 抜粋はエラー時の分岐までを示します。</p>
+<pre><code>if ((st = h5c_popen(path, H5C_READ, &amp;f)) != H5C_OK) {
+    MPI_Abort(MPI_COMM_WORLD, 1);
+}
+
+if ((st = h5c_pread(f, &quot;/coords&quot;, got, H5C_F64, 2, dims)) != H5C_OK) {
+    if (me == 0) {
+        fprintf(stderr, &quot;pread: %s (%s)\n&quot;, h5c_status_string(st),
+                h5c_last_error()-&gt;message);
+    }
+    MPI_Abort(MPI_COMM_WORLD, 1);
+}</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5c/blob/main/example/parallel/main.c"><code>h5c/example/parallel/main.c</code>（完全なプログラム）</a>。</p>
+<p class="note">全体コードでは <code>dims = {nlocal, 3}</code> に相当する shape と、その要素数分の <code>got</code> を事前に用意しています。境界と現在のランク数が一致する必要があります。</p>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-5-cpp" data-lang="cpp" aria-labelledby="task-5-cpp-tab" tabindex="0">
+<p>C++ — 保存された境界から受け取りサイズを決めます。</p>
+<pre><code>h5cpp::parallel_file f(path, h5cpp::mode::read);
+
+const std::vector&lt;double&gt; got = f.read&lt;double&gt;(&quot;/coords&quot;);</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5cpp/blob/main/example/parallel/main.cpp"><code>h5cpp/example/parallel/main.cpp</code>（完全なプログラム）</a>。</p>
+<p class="note">戻り値は局所データの <code>std::vector</code> です。<code>info()</code> や <code>partition()</code> も集団呼び出しなので、ランク 0 だけに限定しないでください。</p>
+</div>
+</div>
+</section>
+<section id="task-6">
+<h2 id="parallel-viz">6. 並列で可視化用に出力する</h2>
+<p>全ランクが同じ時刻・メッシュの順序で局所データを書きます。connectivity はランク内の 0 始まりの節点番号を渡し、保存時に全体の番号へ補正されます。出力後の <a href="../visualization/">XDMF への変換手順</a>は逐次出力と共通です。</p>
+<div class="langs">
+<div class="langs-bar" role="tablist" aria-label="タスク 6の言語">
+<button type="button" role="tab" id="task-6-fortran-tab" data-lang="fortran" aria-controls="task-6-fortran" aria-selected="true">Fortran</button>
+<button type="button" role="tab" id="task-6-c-tab" data-lang="c" aria-controls="task-6-c" aria-selected="false">C</button>
+<button type="button" role="tab" id="task-6-cpp-tab" data-lang="cpp" aria-controls="task-6-cpp" aria-selected="false">C++</button>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-6-fortran" data-lang="fortran" aria-labelledby="task-6-fortran-tab" tabindex="0">
+<p>Fortran — 並列用の writer に局所の節点数・要素数を設定します。</p>
+<pre><code>type(t_phdf5_writer) :: fluid, soil
+
+fluid%h5_filepath = trim(filename)
+fluid%output_type = &quot;UnstructuredGrid&quot;
+fluid%mesh_name = &quot;fluid&quot;
+fluid%topology_type = &quot;Tetrahedron&quot;
+fluid%nodes_per_element = 4
+fluid%num_points = fluid_points
+fluid%num_cells = fluid_cells
+fluid%time = time
+call fluid%init()
+call fluid%write_geometry(fluid_nodes, fluid_connectivity)
+call fluid%write_point_data(pressure, &quot;Pressure&quot;)
+
+call fluid%close()</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5fortran/blob/main/example/parallel-viz/main.F90"><code>h5fortran/example/parallel-viz/main.F90</code>（完全なプログラム）</a>。</p>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-6-c" data-lang="c" aria-labelledby="task-6-c-tab" tabindex="0">
+<p>C — mesh は局所の節点数・要素数で設定します。出力先ディレクトリは事前に作成してください。</p>
+<pre><code>must(h5c_viz_popen(path, t, MPI_COMM_WORLD, MPI_INFO_NULL, &amp;viz),
+     &quot;viz_popen&quot;);
+
+must(h5c_viz_begin_mesh(viz, &amp;mesh), &quot;begin_mesh fluid&quot;);
+
+must(h5c_viz_write_nodes(viz, nodes, H5C_F64), &quot;write_nodes&quot;);
+must(h5c_viz_write_connectivity(viz, conn, H5C_I32), &quot;write_conn&quot;);
+
+must(h5c_viz_write_point_data(viz, &quot;Pressure&quot;, pressure, H5C_F64, 1),
+     &quot;point Pressure&quot;);</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5c/blob/main/example/parallel-viz/main.c"><code>h5c/example/parallel-viz/main.c</code>（完全なプログラム）</a>。</p>
+<p class="note"><code>must</code> はこの例の補助関数で、失敗時には全ランクを停止します。</p>
+</div>
+<div class="langs-panel" role="tabpanel" id="task-6-cpp" data-lang="cpp" aria-labelledby="task-6-cpp-tab" tabindex="0">
+<p>C++ — 局所メッシュと物理量を渡します。</p>
+<pre><code>h5cpp::parallel_viz writer(path, time);
+
+writer.begin_mesh({h5cpp::viz_kind::unstructured, &quot;fluid&quot;, &quot;Tetrahedron&quot;,
+                   4, npoints, kCells});
+writer.write_nodes(nodes);
+writer.write_connectivity(connectivity);
+writer.write_point_data(&quot;Pressure&quot;, pressure);
+writer.write_point_data(&quot;Velocity&quot;, velocity, 3);
+writer.write_cell_data(&quot;SubdomainID&quot;, subdomain);</code></pre>
+<p>参考：<a href="https://github.com/suzuyuyuyu/h5cpp/blob/main/example/parallel-viz/main.cpp"><code>h5cpp/example/parallel-viz/main.cpp</code>（完全なプログラム）</a>。</p>
+<p class="note">並列 writer でも vector の長さを検査します。全体コードには例外の捕捉とランク間の終了状態の集約が含まれます。</p>
+</div>
+</div>
+</section>
+
+</main>
+
+<footer>
+  h5fortran · h5c · h5cpp · h5xdmf
+</footer>
+
+<script>
+const bars = document.querySelectorAll('.langs-bar');
+const buttons = document.querySelectorAll('.langs-bar button');
+const panels = document.querySelectorAll('.langs-panel');
+function selectLanguage(lang) {
+  if (!['fortran', 'c', 'cpp'].includes(lang)) lang = 'fortran';
+  buttons.forEach(b => { b.setAttribute('aria-selected', String(b.dataset.lang === lang)); b.tabIndex = b.dataset.lang === lang ? 0 : -1; });
+  panels.forEach(p => { p.hidden = p.dataset.lang !== lang; });
+}
+let saved = 'fortran';
+try { saved = localStorage.getItem('h5docs-lang') || saved; } catch {}
+selectLanguage(saved);
+bars.forEach(bar => {
+  bar.addEventListener('click', e => {
+    const button = e.target.closest('button');
+    if (!button) return;
+    selectLanguage(button.dataset.lang);
+    try { localStorage.setItem('h5docs-lang', button.dataset.lang); } catch {}
+  });
+  bar.addEventListener('keydown', e => {
+    const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'], tabs = [...bar.querySelectorAll('button')], i = tabs.indexOf(document.activeElement);
+    if (!keys.includes(e.key) || i < 0) return;
+    e.preventDefault();
+    const next = tabs[e.key === 'Home' ? 0 : e.key === 'End' ? 2 : (i + (e.key === 'ArrowRight' ? 1 : 2)) % 3];
+    next.click(); next.focus();
+  });
+});
+</script>
+
+</body>
+</html>

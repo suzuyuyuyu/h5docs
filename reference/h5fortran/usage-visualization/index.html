@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>h5fortran / USAGE-visualization — h5</title>
+<link rel="stylesheet" href="../../../assets/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href="../../.././">h5</a>
+    <nav>
+      <a href="../../.././">はじめに</a>
+      <a href="../../../install/">インストール</a>
+      <a href="../../../usage/">使い方</a>
+      <a href="../../../visualization/">可視化</a>
+      <a href="../../../reference/" aria-current="page">リファレンス</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+<p>出典：<code>h5fortran/docs/USAGE-visualization.md</code></p><div class="reference"><h1 id="可視化用hdf5出力">可視化用HDF5出力</h1>
+<p><code>t_hdf5_writer</code> はローカルのmeshとfieldを逐次出力します。
+<code>t_phdf5_writer</code> は全MPI rankのデータを一つのHDF5ファイルへ集合的に書きます。
+Parallel APIを有効にしたビルドでは、用途に応じて二つのwriterを使い分けられます。
+どちらも同じscheme_version=1のレイアウトを生成します。Fortran側ではXDMF/XMLを生成しません。HDF5時系列を出力した後、
+独立ツール<a href="https://github.com/suzuyuyuyu/h5xdmf"><code>h5xdmf</code></a>でXDMF3を生成します。</p>
+<p>snapshot HDF5を正本とし、<code>metadata.h5</code> はPythonが作る再生成可能な索引とする。
+ソルバーは <code>metadata.h5</code> へ追記しない。</p>
+<p>想定する完成形:</p>
+<pre><code class="language-text">result/
+├── seq000000.h5
+├── seq000001.h5
+├── ...
+├── metadata.h5
+├── fluid.xdmf
+└── soil_particles.xdmf
+</code></pre>
+<h2 id="hdf5出力">HDF5出力</h2>
+<pre><code class="language-fortran">use hdf5, only: h5open_f, h5close_f
+use h5fort
+use mpi
+use iso_fortran_env, only: int64, real64
+
+type(t_phdf5_writer) :: writer
+integer :: ierr, hdferr
+real(real64) :: nodes(3, num_points)
+integer(int64) :: connectivity(8, num_cells)
+real(real64) :: pressure(num_points)
+real(real64) :: velocity(3, num_points)
+
+call MPI_Init(ierr)
+call h5open_f(hdferr)
+if (hdferr /= 0) call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+
+writer%h5_filepath = 'result/seq000000.h5'
+writer%output_type = 'UnstructuredGrid'
+writer%num_points = num_points
+writer%num_cells = num_cells
+writer%time = 0.0_real64
+
+call writer%init()
+call writer%write_geometry_ugrid(nodes, connectivity)
+call writer%write_point_data(pressure, 'Pressure')
+call writer%write_point_data(velocity, 'Velocity')
+call writer%close()
+
+call h5close_f(hdferr)
+if (hdferr /= 0) call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+call MPI_Finalize(ierr)
+</code></pre>
+<p>逐次出力には型を <code>type(t_hdf5_writer)</code> に変更し、<code>use mpi</code> とMPIの初期化・終了を
+省略します。HDF5のエラー判定は <code>if (hdferr /= 0) error stop</code> とします。
+writerの設定とwrite呼び出しは共通です。逐次writerはMPI有効ビルドでも利用できます。
+複数rankから逐次出力する場合、rankごとに異なるファイル名を指定してください。</p>
+<p><code>h5fort</code> は常に <code>t_hdf5_writer</code> を公開し、
+<code>H5FORTRAN_ENABLE_PARALLEL=ON</code> で <code>t_phdf5_writer</code> を公開します。
+逐次writerだけを使うconsumerでは <code>h5fortran_serial</code> のみをリンクし、
+<code>use h5fort_serial_visualization, only: t_hdf5_writer</code> とします。
+インストール後のtarget名は <code>h5fortran::h5fortran_serial</code> です。
+並列consumerは <code>h5fortran_parallel</code>、全APIを使う場合は <code>h5fortran</code> をリンクします。</p>
+<p><code>H5FORTRAN_HDF5_ROOT</code>（または <code>HDF5_ROOT</code>）に使用するHDF5のprefixを指定します。
+一つのビルドでは全targetが同じHDF5を使います。parallel構成にはparallel HDF5が必要です。
+この構成では <code>h5fortran_serial</code> だけをリンクしても、parallel HDF5由来のMPI依存が残ります。
+MPI依存のない構成には、<code>H5FORTRAN_ENABLE_PARALLEL=OFF</code> とserial HDF5を指定して
+別途ビルドしてください。serial構成でparallel HDF5を使用することもできますが、
+その場合もHDF5由来のMPI依存は残ります。</p>
+<p>以下のrankに関する説明はparallel writerに適用します。</p>
+<p><code>num_cells</code> は各rankが出力するowned cell数で、ghost cellは含めません。
+<code>num_points</code> はowned cellが参照する全local node数です。rank境界の共有・halo nodeは
+rankごとに別nodeとして重複して構いません。</p>
+<p>connectivityは <code>nodes(:, :)</code> を参照するrank-local 0-origin node IDで渡します。
+writerがrankごとのnode offsetを加え、HDF5全体のIDへ変換します。呼び出し側で
+global node IDを計算するための通信は不要です。<code>init</code>、write、<code>close</code> は全rankが
+同じ順序で呼びます。</p>
+<p>両writerともHDF5ライブラリ自体の開始・終了を行いません。parallelでは全rankがプログラム全体で
+<code>MPI_Init</code> → <code>h5open_f</code> → writer処理 → <code>h5close_f</code> → <code>MPI_Finalize</code> の順に
+呼びます。複数stepや複数meshを書いても、<code>h5open_f</code> / <code>h5close_f</code> はそれぞれ
+1回だけです。</p>
+<pre><code class="language-fortran">! nodes(:, 1:4) を参照するrank-local connectivity
+connectivity(:, 1) = [0_int64, 1_int64, 2_int64, 3_int64]
+call writer%write_geometry(nodes, connectivity)
+</code></pre>
+<p>共有nodeのfield値を一致させて可視化したい場合、必要に応じて出力前に通常のhalo
+exchangeを行います。これはnode番号を統合する通信ではなく、field値を同期するための
+通信です。</p>
+<p>重複nodeを結合したい場合はParaViewの <code>Clean to Grid</code> filterを利用できます。
+ghost cellまで出力するとcellが重複するため、出力対象はowned cellだけにします。</p>
+<p>PolyDataは <code>output_type='PolyData'</code>、<code>num_cells=0</code> として
+<code>write_geometry_polydata(nodes)</code> を呼びます。同じ <code>h5_filepath</code> に
+UnstructuredGrid、PolyDataの順で書くと、<code>/ugrid</code> と <code>/polydata</code> に保存されます。</p>
+<h2 id="connectivity-meshの一般形">Connectivity meshの一般形</h2>
+<p>connectivityを持つmeshは、同じwriterで任意のXDMF topologyを扱えます。
+<code>mesh_name</code> はHDF5のroot直下group名です。</p>
+<pre><code class="language-fortran">writer%h5_filepath = 'result/seq000000.h5'
+writer%output_type = 'UnstructuredGrid'
+writer%mesh_name = 'tetra'
+writer%topology_type = 'Tetrahedron'
+writer%nodes_per_element = 4
+writer%num_points = num_points
+writer%num_cells = num_cells
+writer%time = time
+
+call writer%init()
+call writer%write_geometry(nodes, connectivity)
+call writer%write_point_data(pressure, 'Pressure')
+call writer%close()
+</code></pre>
+<p>代表的な指定は次のとおりです。</p>
+<table>
+<thead>
+<tr>
+<th>要素</th>
+<th><code>topology_type</code></th>
+<th style="text-align: right;"><code>nodes_per_element</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>六面体</td>
+<td><code>Hexahedron</code></td>
+<td style="text-align: right;">8</td>
+</tr>
+<tr>
+<td>四面体</td>
+<td><code>Tetrahedron</code></td>
+<td style="text-align: right;">4</td>
+</tr>
+<tr>
+<td>2D四角形</td>
+<td><code>Quadrilateral</code></td>
+<td style="text-align: right;">4</td>
+</tr>
+<tr>
+<td>三角形</td>
+<td><code>Triangle</code></td>
+<td style="text-align: right;">3</td>
+</tr>
+</tbody>
+</table>
+<p><code>topology_type</code> と <code>nodes_per_element</code> は同時に指定します。省略した場合だけ
+<code>Hexahedron</code>、8が既定値になります。同じHDF5へ異なる <code>mesh_name</code> で順番に
+書き込むことで、複数種類のmeshを一つのtime stepに保存できます。</p>
+<h2 id="scheme_version1">scheme_version=1</h2>
+<p>保存先と属性は共有仕様の<a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/FORMAT.md#可視化レイアウト">可視化レイアウト</a>を参照してください。</p>
+<p>Fortran配列はcolumn-majorで、第1次元が最も速く変化します。HDF5 Fortran APIは
+次元を反転して保存するため、C/C++・h5pyのrow-major表記とは次の対応になります。</p>
+<table>
+<thead>
+<tr>
+<th>Fortranで渡す形状</th>
+<th>ファイル上の形状</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nodes(3, num_points)</code></td>
+<td><code>(num_points, 3)</code></td>
+</tr>
+<tr>
+<td><code>connectivity(nodes_per_element, num_cells)</code></td>
+<td><code>(num_cells, nodes_per_element)</code></td>
+</tr>
+<tr>
+<td><code>field(ncomp, nlocal)</code></td>
+<td><code>(nlocal, ncomp)</code></td>
+</tr>
+<tr>
+<td><code>field(nlocal)</code></td>
+<td><code>(nlocal)</code></td>
+</tr>
+</tbody>
+</table>
+<p>並列出力ではFortranの最終次元（ファイル上の第0次元）に沿ってrankのデータを連結します。
+呼び出し側で転置する必要はありません。一般の配列も <code>a(nx, ny)</code> がファイルでは
+<code>(ny, nx)</code> になります。<a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/FORMAT.md#次元順序">次元順序</a>も参照してください。</p>
+<p><code>Tensor6</code> は <code>field(6, nlocal)</code> の第1次元を <code>XX, YY, ZZ, XY, YZ, XZ</code> の順にします。
+<a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/FORMAT.md#多成分フィールド">テンソル成分の順序</a>に従ってください。</p>
+<p>geometryは <code>real(real32/real64/real128)</code>、connectivityは
+<code>integer(int8/int16/int32/int64)</code>、point/cell dataはこれら7 kindの1D/2Dに
+対応します。</p>
+<h2 id="xdmfの生成">XDMFの生成</h2>
+<p>Python 3.10以上と<code>uv</code>を用意し、h5xdmfをインストールして実行します。</p>
+<pre><code class="language-sh">uv tool install ../h5xdmf
+h5xdmf &quot;result/seq*.h5&quot; --metadata result/metadata.h5 --outdir result
+</code></pre>
+<p>更新・再構築、空stepの扱いと運用上の注意は
+<a href="../postprocess/">POSTPROCESS.md</a> を参照してください。</p>
+<h2 id="完成形のexample">完成形のexample</h2>
+<p>逐次・並列のどちらも、5 stepの流体・土粒子snapshot出力からポストプロセスまで
+一括実行できます。流体は四面体mesh上の圧力波と渦速度、土粒子は沈降・拡散と応力を持つ。</p>
+<table>
+<thead>
+<tr>
+<th>example</th>
+<th>writer</th>
+<th>実行ファイル</th>
+<th>データ規模</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/suzuyuyuyu/h5fortran/blob/main/example/serial-viz/README.md"><code>serial-viz</code></a></td>
+<td><code>t_hdf5_writer</code></td>
+<td><code>example_serial_viz</code></td>
+<td>1プロセスで全meshを作成</td>
+</tr>
+<tr>
+<td><a href="https://github.com/suzuyuyuyu/h5fortran/blob/main/example/parallel-viz/README.md"><code>parallel-viz</code></a></td>
+<td><code>t_phdf5_writer</code></td>
+<td><code>example_parallel_viz</code></td>
+<td>既定2 rankのlocal meshを結合</td>
+</tr>
+</tbody>
+</table>
+<p>1プロセスで出力する場合は逐次例を使います。</p>
+<pre><code class="language-sh">example/serial-viz/generate.sh build
+</code></pre>
+<p>複数rankから集合的に出力する場合は <code>example/parallel-viz/generate.sh build</code> を
+使います。
+両例は同じmesh・field名で <code>result/seq000000.h5</code> 〜 <code>seq000004.h5</code> を生成します。
+生成されるファイルと使い方は各exampleのREADMEを参照してください。
+ParaViewでの色付け、Glyph、粒子表示の手順もexample READMEに記載している。</p>
+<p>必要な実行時ツールはPython 3.10以上、<code>h5py</code>、<code>numpy</code>です。依存関係と固定版は
+h5xdmfの <code>pyproject.toml</code> と <code>uv.lock</code> で管理されています。生成XDMFの確認にはParaView、
+HDF5構造の手動確認には <code>h5dump</code> または <code>h5ls</code> が便利ですが、どちらも生成処理の
+必須依存ではありません。</p></div>
+</main>
+
+<footer>
+  h5fortran · h5c · h5cpp · h5xdmf
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>可視化 — h5</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href=".././">h5</a>
+    <nav>
+      <a href=".././">はじめに</a>
+      <a href="../install/">インストール</a>
+      <a href="../usage/">使い方</a>
+      <a href="../visualization/" aria-current="page">可視化</a>
+      <a href="../reference/">リファレンス</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+<h1>HDF5 から ParaView へ</h1>
+<p class="lede">ソルバーが書き終えた各時刻の HDF5 を h5xdmf で索引化し、生成されたメッシュ別の XDMF を ParaView で開きます。</p>
+<p>出典：<a href="https://github.com/suzuyuyuyu/h5xdmf/blob/main/README.md">h5xdmf/README.md</a>、<a href="../reference/h5xdmf/usage/">h5xdmf/docs/USAGE.md</a>、<a href="../reference/h5fortran/usage-visualization/">h5fortran/docs/USAGE-visualization.md</a>。</p>
+<h2>1. ソルバーの出力を確認する</h2>
+<p><a href="../usage/#task-3">可視化ライター</a>で、座標・接続情報・物理量・時刻を書きます。単に配列を書いただけの任意の HDF5 には、可視化の対応情報がありません。3 言語の可視化ライターは共通の <code>scheme_version=1</code> を出力します。</p>
+<p>1 時刻 1 ファイルとし、同じ計算では番号のゼロ埋め幅を揃えます。glob は辞書順に展開されます。読み込むのは書き込みが完了したファイルだけにしてください。</p>
+<pre><code class="language-text">result/
+├── seq000000.h5
+├── seq000001.h5
+└── seq000002.h5</code></pre>
+<p>並列出力も全ランクを連結した一つの論理メッシュになります。connectivity はランク内の 0 始まりの節点番号を渡し、ライターがオフセットを加えます。出力するセルは owned cell のみとし、ghost cell の二重出力を避けます。詳細は <a href="../reference/h5fortran/usage-visualization/">可視化ライター</a>を参照してください。</p>
+<h2>2. 読み取り専用で検査する</h2>
+<p><a href="../install/#h5xdmf">h5xdmf の導入</a>後、出力ディレクトリの親で次を実行します。glob を引用符で囲み、h5xdmf に展開させます。</p>
+<pre><code class="language-sh">h5xdmf --check &quot;result/seq*.h5&quot;</code></pre>
+<p><code>--check</code> は一致した全ファイルの scheme version、座標・接続情報、物理量の成分数・要素数、存在する <code>__partition__</code> の境界を検査します。問題はファイル名と HDF5 オブジェクトのパスごとに表示し、問題があれば終了ステータス 1 を返します。HDF5 を変更せず、索引・XDMF・出力ディレクトリも作りません。</p>
+<h2>3. 索引と XDMF を生成する</h2>
+<pre><code class="language-sh">h5xdmf &quot;result/seq*.h5&quot; --metadata result/metadata.h5 --outdir result</code></pre>
+<p><code>metadata.h5</code> は h5xdmf が作る再生成可能な索引です。元の <code>seq*.h5</code> がデータの正本で、ソルバーから索引を直接更新しません。</p>
+<p>メッシュのグループ名ごとに <code>&lt;mesh_name&gt;.xdmf</code> が生成されます。Fortran の可視化例なら <code>fluid.xdmf</code> と <code>soil_particles.xdmf</code>、このサイトの C・C++ 例なら <code>fluid.xdmf</code> と <code>particles.xdmf</code> です。</p>
+<div class="note">XDMF は元の HDF5 dataset を相対パスで参照します。ParaView を使うマシンへ移すときは、XDMF と snapshot HDF5 を相対位置を保ったまままとめてコピーします。<code>metadata.h5</code> を開く手順ではありません。</div>
+<h2>4. ParaView で開く</h2>
+<p>mesh ごとに <code>&lt;mesh_name&gt;.xdmf</code> が生成されるので、見たい mesh のものを開きます。時系列は 1 つの XDMF にまとまっているため、時刻の切り替えはそのまま使えます。field は書き出したときの名前で現れ、3 成分は <code>Vector</code>、6 成分は対称テンソルとして扱われます。</p>
+<ol>
+<li>ParaView の <code>File → Open</code> で <code>result/fluid.xdmf</code> を選び、<code>Apply</code> を押します。</li>
+<li>粒子も表示するなら <code>soil_particles.xdmf</code> または <code>particles.xdmf</code> を追加して <code>Apply</code> を押します。</li>
+<li>流体を <code>Pressure</code> で色付けし、必要なら <code>Slice</code>／<code>Clip</code> で内部を見ます。</li>
+<li>速度は <code>Glyph</code> の方向に <code>Velocity</code> を選びます。Fortran 例では大きさに <code>Speed</code> も使えます。</li>
+<li>粒子は <code>Point Gaussian</code> などで表示します。Fortran 例なら <code>EquivalentStress</code>、C・C++ 例なら <code>Radius</code> で色付けできます。</li>
+<li>時刻を切り替えるかアニメーションを再生します。</li>
+</ol>
+<p>上の field 名は例のものです。自分の出力では、書き出した名前がそのまま現れます。表示例の出典：<a href="https://github.com/suzuyuyuyu/h5fortran/blob/main/example/serial-viz/README.md">h5fortran/example/serial-viz/README.md</a>。ランク境界の重複節点を結合したい場合は <code>Clean to Grid</code> を使えます。</p>
+<h2>時系列を更新する</h2>
+<p>新しい時刻を追加しただけなら、生成コマンドをもう一度実行します。未登録ファイルだけが索引へ追加されます。既存の名前の HDF5 を上書きした場合は全再構築が必要です。</p>
+<pre><code class="language-sh">h5xdmf &quot;result/seq*.h5&quot; --metadata result/metadata.h5 --outdir result --rebuild</code></pre>
+<p>snapshot を再走査せず、既存の索引から XDMF だけを再生成する場合は入力 glob を指定しません。</p>
+<pre><code class="language-sh">h5xdmf --generate-only --metadata result/metadata.h5 --outdir result</code></pre>
+<p>削除済みの snapshot を索引から除いて更新する場合：</p>
+<pre><code class="language-sh">h5xdmf &quot;result/seq*.h5&quot; --metadata result/metadata.h5 --outdir result --prune</code></pre>
+<p>同じメッシュ名では topology、要素当たり節点数、物理量の構成・順序・型、節点／セルへの対応、Scalar／Vector／Tensor 種別を固定します。時刻や節点・粒子数は変えられます。要素数 0 の時刻は空の Spatial Collection になり、空 dataset を XDMF から参照しません。</p>
+<p><a href="../reference/h5xdmf/usage/">h5xdmf の詳細</a>、<a href="../reference/h5fortran/postprocess/">snapshot と索引の役割</a>、<a href="../reference/h5c/format/">共通ファイル形式</a></p>
+
+</main>
+
+<footer>
+  h5fortran · h5c · h5cpp · h5xdmf
+</footer>
+
+</body>
+</html>

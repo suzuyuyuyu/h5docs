@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>h5fortran / USAGE — h5</title>
+<link rel="stylesheet" href="../../../assets/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href="../../.././">h5</a>
+    <nav>
+      <a href="../../.././">はじめに</a>
+      <a href="../../../install/">インストール</a>
+      <a href="../../../usage/">使い方</a>
+      <a href="../../../visualization/">可視化</a>
+      <a href="../../../reference/" aria-current="page">リファレンス</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+<p>出典：<code>h5fortran/docs/USAGE.md</code></p><div class="reference"><h1 id="h5fortran-の使い方">h5fortran の使い方</h1>
+<h2 id="製品hdf5-scheme-version">製品・HDF5 scheme version</h2>
+<p><code>use h5fort</code>により、製品と現在のHDF5出力schemeを参照できる。</p>
+<pre><code class="language-fortran">print *, H5FORTRAN_VERSION
+print *, H5FORTRAN_VERSION_MAJOR
+print *, H5FORTRAN_SCHEME_VERSION
+</code></pre>
+<p><code>H5FORTRAN_SCHEME_VERSION</code>は製品SemVerとは独立した可視化HDF5形式の版である。
+readerはファイルrootの<code>scheme_version</code>属性を読み、対応するschemeを選ぶ。</p>
+<h2 id="serial-oop-api">Serial: OOP API</h2>
+<p>通常は <code>t_h5fort_serial</code> を使うと、HDF5 の file ID と直前のエラーがオブジェクト内にまとまります。</p>
+<pre><code class="language-fortran">use hdf5, only: h5open_f, h5close_f
+use h5fort
+use iso_fortran_env, only: real64
+
+type(t_h5fort_serial) :: file
+integer :: hdferr
+real(real64) :: values(3) = [1, 2, 3]
+real(real64), allocatable :: restored(:)
+
+call h5open_f(hdferr)
+if (hdferr /= 0) error stop &quot;HDF5 initialization failed&quot;
+
+file%f_name = &quot;result.h5&quot;
+call file%open(H5FORTRAN_FORCE_WRITE)
+call file%write(&quot;/result/value&quot;, values, units=&quot;m/s&quot;)
+if (file%hdferr /= 0) error stop &quot;write failed&quot;
+call file%close()
+
+call file%open(H5FORTRAN_READ_ONLY)
+call file%read(&quot;/result/value&quot;, restored)
+if (file%hdferr /= 0) error stop &quot;read failed&quot;
+call file%close()
+
+call h5close_f(hdferr)
+if (hdferr /= 0) error stop &quot;HDF5 finalization failed&quot;
+</code></pre>
+<p><code>h5fortran</code> はHDF5ライブラリの開始・終了を行いません。利用者が処理全体で
+<code>h5open_f</code> と <code>h5close_f</code> をそれぞれ1回呼びます。<code>h5close_f</code> はすべての
+<code>t_h5fort_serial</code> ファイルを閉じた後に呼んでください。</p>
+<p><code>open()</code> の mode は次のとおりです。</p>
+<ul>
+<li><code>H5FORTRAN_FORCE_WRITE</code>: 新規作成し、既存ファイルを切り詰める</li>
+<li><code>H5FORTRAN_READ_ONLY</code>: 読み込み専用で開く</li>
+<li>省略: 読み書き可能で既存ファイルを開く</li>
+</ul>
+<p><code>write</code> は中間 group を自動作成します。既存 dataset を置き換える場合は <code>mode=H5FORTRAN_FORCE_WRITE</code> を渡します。<code>attrs</code> には <code>t_hdf5_attr</code> の配列、<code>units</code> には文字列を指定できます。</p>
+<p>文字列 attribute は dataset の書き込みとは独立して読み書きできます。対象 path には dataset、group、root group を指定できます。</p>
+<pre><code class="language-fortran">character(len=:), allocatable :: description
+
+call file%write_attribute(&quot;/result/value&quot;, &quot;description&quot;, &quot;flow velocity&quot;)
+call file%read_attribute(&quot;/result/value&quot;, &quot;description&quot;, description)
+</code></pre>
+<p>固定サイズ配列へ読むときは <code>read_fixed</code> を使います。dataset と shape が違う場合は <code>hdferr</code> が非ゼロになります。logical 配列も利用できます。</p>
+<pre><code class="language-fortran">logical :: flags(2, 3)
+call file%read_fixed(&quot;/flags&quot;, flags)
+</code></pre>
+<h2 id="serial-手続き-api">Serial: 手続き API</h2>
+<p>既存コードが HDF5 file ID を管理している場合は、低水準 API を直接呼べます。</p>
+<pre><code class="language-fortran">call h5fort_swrite(file_id, &quot;/value&quot;, values, hdferr)
+call h5fort_sread(file_id, &quot;/value&quot;, restored, hdferr)
+call h5fort_sread_fixed(file_id, &quot;/flags&quot;, flags, hdferr)
+call h5fort_write_attribute(file_id, &quot;/value&quot;, &quot;units&quot;, &quot;m/s&quot;, hdferr)
+call h5fort_read_attribute(file_id, &quot;/value&quot;, &quot;units&quot;, units, hdferr)
+call h5fort_get_dataset_info(file_id, &quot;/value&quot;, dataset_rank, dataset_shape, hdferr)
+</code></pre>
+<p>数値 attribute はscalarと1D配列に同じ generic を使います。配列長が未知の場合は、
+先に要素数を取得して呼び出し側で配列を確保します。</p>
+<pre><code class="language-fortran">use iso_fortran_env, only: int64, real64
+integer(int64) :: attribute_count
+real(real64), allocatable :: bounds(:)
+
+call h5fort_write_attribute(file_id, &quot;/value&quot;, &quot;time&quot;, 0.5_real64, hdferr)
+call h5fort_write_attribute(file_id, &quot;/value&quot;, &quot;bounds&quot;, [0.0_real64, 1.0_real64], hdferr)
+
+call h5fort_get_attribute_info(file_id, &quot;/value&quot;, &quot;bounds&quot;, attribute_count, hdferr)
+allocate(bounds(attribute_count))
+call h5fort_read_attribute(file_id, &quot;/value&quot;, &quot;bounds&quot;, bounds, hdferr)
+</code></pre>
+<p>配列長が保存済み属性と異なる場合、読み込みはデータを転送せず失敗します。</p>
+<h2 id="parallel-oop-api">Parallel: OOP API</h2>
+<p>MPI 初期化後、全 rank が同じ順序で <code>open</code> / <code>write</code> / <code>read</code> / <code>close</code> を呼びます。配列の最終次元が rank 間で分割され、それ以外の次元は全 rank で一致している必要があります。</p>
+<pre><code class="language-fortran">use hdf5, only: h5open_f, h5close_f
+use h5fort
+use mpi
+use iso_fortran_env, only: real64
+
+type(t_h5fort_parallel) :: file
+integer :: ierr, hdferr
+real(real64) :: local_values(10)
+real(real64), allocatable :: restored(:)
+
+call MPI_Init(ierr)
+call h5open_f(hdferr)
+if (hdferr /= 0) call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+
+file%f_name = &quot;parallel.h5&quot;
+file%comm = subcomm                 ! 省略時は MPI_COMM_WORLD
+file%info = MPI_INFO_NULL           ! ROMIO hintsを設定したMPI_Infoも指定可能
+file%transfer_mode = H5FORTRAN_XFER_COLLECTIVE
+call file%open(H5FORTRAN_FORCE_WRITE)
+call file%write(&quot;/value&quot;, local_values)
+call file%close()
+
+call file%open(H5FORTRAN_READ_ONLY)
+call file%read(&quot;/value&quot;, restored)
+call file%close()
+
+call h5close_f(hdferr)
+if (hdferr /= 0) call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+call MPI_Finalize(ierr)
+</code></pre>
+<p>Parallelでは全rankが <code>MPI_Init</code> の後に <code>h5open_f</code>、全HDF5ファイルを閉じた後かつ
+<code>MPI_Finalize</code> の前に <code>h5close_f</code> を呼びます。ファイルごとの <code>open</code> / <code>close</code> と
+HDF5ライブラリ全体の <code>h5open_f</code> / <code>h5close_f</code> は別のライフサイクルです。</p>
+<p>手続き API は <code>h5fort_pwrite</code>、<code>h5fort_pread</code>、<code>h5fort_pread_fixed</code> です。
+<code>comm=</code> と <code>transfer_mode=H5FORTRAN_XFER_COLLECTIVE|H5FORTRAN_XFER_INDEPENDENT</code>
+を指定できます。Parallel の文字列 I/O は現在未実装です。</p>
+<h2 id="parallel-の保存形式">Parallel の保存形式</h2>
+<p>例えば <code>/value</code> は次のように保存されます。</p>
+<pre><code class="language-text">/value/data       全 rank のデータ
+/value/__partition__  rank境界（長さはMPI process数 + 1）
+</code></pre>
+<p>例えば各rankの要素数が <code>[2, 3, 0, 4]</code> なら、<code>__partition__</code> は
+<code>[0, 2, 5, 5, 9]</code> です。rank <code>r</code> の開始位置は <code>partition(r)</code>、要素数は
+<code>partition(r+1) - partition(r)</code> です。</p>
+<p>詳細な型・rank とエラー契約は <a href="../spec/">SPEC.md</a> を参照してください。</p>
+<p>可視化用のSerial / Parallel HDF5 writerとPythonポストプロセスは
+<a href="../usage-visualization/">USAGE-visualization.md</a>、
+出力ファイルとmanifestの責務は <a href="../postprocess/">POSTPROCESS.md</a> を参照してください。</p></div>
+</main>
+
+<footer>
+  h5fortran · h5c · h5cpp · h5xdmf
+</footer>
+
+</body>
+</html>

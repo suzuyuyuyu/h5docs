@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>h5fortran / POSTPROCESS — h5</title>
+<link rel="stylesheet" href="../../../assets/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href="../../.././">h5</a>
+    <nav>
+      <a href="../../.././">はじめに</a>
+      <a href="../../../install/">インストール</a>
+      <a href="../../../usage/">使い方</a>
+      <a href="../../../visualization/">可視化</a>
+      <a href="../../../reference/" aria-current="page">リファレンス</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+<p>出典：<code>h5fortran/docs/POSTPROCESS.md</code></p><div class="reference"><h1 id="ポストプロセス">ポストプロセス</h1>
+<h2 id="方針">方針</h2>
+<p>Fortranソルバーが出力する各stepのsnapshot HDF5を正本とし、<code>metadata.h5</code> は
+Pythonポストプロセスが構築する再生成可能な索引とする。</p>
+<pre><code class="language-text">Fortran solver
+    ├── result/seq000000.h5
+    ├── result/seq000001.h5
+    └── result/seq000002.h5
+              │ metadata-only走査
+              ▼
+         result/metadata.h5
+              │
+              ├── result/fluid.xdmf
+              └── result/soil_particles.xdmf
+</code></pre>
+<p>ソルバーは <code>metadata.h5</code> を更新しない。</p>
+<h2 id="ファイルの責務">ファイルの責務</h2>
+<h3 id="seqnnnnnnh5"><code>seqNNNNNN.h5</code></h3>
+<p>Fortranソルバーが1 output stepにつき1ファイル出力する。field本体、geometry、
+connectivityと、そのファイルを解釈するためのmetadataを保持する。</p>
+<p>保存レイアウトは共有仕様の<a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/FORMAT.md#可視化レイアウト">可視化レイアウト</a>を参照する。</p>
+<p>ファイル名の数字部分の桁数は固定しない。ただしglobを辞書順に並べるため、同じrun内
+ではゼロ埋め桁数を統一する。標準例では6桁の <code>seqNNNNNN.h5</code> を使用する。</p>
+<h3 id="metadatah5"><code>metadata.h5</code></h3>
+<p>Pythonのindexerがsnapshot HDF5のshape、dtype、属性、pathだけを読み、field本体を
+ロードせずに作成する。削除または破損してもsnapshot HDF5から再構築できる。</p>
+<p>初回は指定されたsnapshotを走査する。再実行時は未登録のsnapshotだけを読み、
+索引へ追記する。同じ入力での再実行はno-opである。</p>
+<p>時系列を通して固定するもの:</p>
+<ul>
+<li>mesh名とHDF5 group path</li>
+<li>topologyとnodes per element</li>
+<li>field名と順序</li>
+<li>dtype</li>
+<li>Node/Cell centering</li>
+<li>Scalar/Vector/Tensor種別</li>
+</ul>
+<p>stepごとに変化できるもの:</p>
+<ul>
+<li>snapshot HDF5ファイル名</li>
+<li>time</li>
+<li>node数</li>
+<li>element数または粒子数</li>
+</ul>
+<h3 id="xdmf">XDMF</h3>
+<p>XDMFはfield値を複製せず、<code>seqNNNNNN.h5</code> 内のdatasetをHeavy Dataとして参照する。
+現在はmesh group名ごとに1つの時系列XDMFを生成する。</p>
+<p>時系列中にnode数またはelement数が0のstepがあるmeshは、各stepをSpatial
+Collectionで包む。非空stepにはUniform Gridを1つ置き、空stepは子Gridを持たない
+空のSpatial Collectionとする。これにより、粒子が消滅する時系列を正確に表現しつつ、
+ParaViewがゼロサイズHDF5 DataItemを時間更新時に再読込する経路を避ける。
+HDF5 snapshotと<code>metadata.h5</code>の粒子数は変更しない。</p>
+<p>標準的な物理区分は次の2つである。</p>
+<pre><code class="language-text">fluid.xdmf
+soil_particles.xdmf
+</code></pre>
+<p>流体meshと土粒子をParaViewで個別に開くことができ、両方を読み込めば重ねて表示
+できる。</p>
+<p>meshが存在しないstepも扱える。scheme v1は同じmesh名の複数空間ブロックやAMRを扱わない。
+粒子数は索引の <code>/meshes/&lt;mesh_name&gt;/timeseries/num_elements</code> で確認できる。</p>
+<h2 id="実行">実行</h2>
+<pre><code class="language-sh">h5xdmf &quot;result/seq*.h5&quot; --metadata result/metadata.h5 --outdir result
+</code></pre>
+<ul>
+<li>通常実行: 新しいsnapshotだけをmanifestへ追加してXDMFを生成</li>
+<li><code>--rebuild</code>: <code>metadata.h5</code> を最初から再構築</li>
+<li><code>--generate-only</code>: snapshotを走査せず、既存manifestからXDMFだけを再生成</li>
+<li><code>--prune</code>: 存在しないsnapshotをmanifestから除外してstep indexを詰め直す</li>
+</ul>
+<p>snapshotのschemaだけを検査する場合は次を実行する。</p>
+<pre><code class="language-sh">h5xdmf --check &quot;result/seq*.h5&quot;
+</code></pre>
+<h2 id="完成形のexample">完成形のexample</h2>
+<p>5 stepの流体・土粒子出力は<a href="https://github.com/suzuyuyuyu/h5fortran/blob/main/example/serial-viz/README.md">逐次例</a>と
+<a href="https://github.com/suzuyuyuyu/h5fortran/blob/main/example/parallel-viz/README.md">並列例</a>を参照する。
+各例の <code>result/</code> にsnapshot、<code>metadata.h5</code>、mesh別XDMFを生成する。
+並列例はクラスタのジョブスクリプトから実行する。</p>
+<h2 id="運用上の注意">運用上の注意</h2>
+<ul>
+<li>書き込み途中のsnapshotをindexerが読まないようにする。</li>
+<li>実運用では一時名へ出力し、close後に最終的な <code>.h5</code> 名へrenameする方法を推奨する。</li>
+<li><code>metadata.h5</code> は索引なのでバックアップ必須ではないが、再走査を避けるため通常は保持する。</li>
+<li>snapshotを同じファイル名で上書きした場合、既存manifestは自動再索引化しない。</li>
+<li>snapshotを削除した場合は<code>--prune</code>でmanifestから明示的に除外する。</li>
+<li>XDMF <code>Mixed</code> topologyは未対応である。</li>
+</ul></div>
+</main>
+
+<footer>
+  h5fortran · h5c · h5cpp · h5xdmf
+</footer>
+
+</body>
+</html>

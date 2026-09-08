@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>h5fortran / SPEC — h5</title>
+<link rel="stylesheet" href="../../../assets/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href="../../.././">h5</a>
+    <nav>
+      <a href="../../.././">はじめに</a>
+      <a href="../../../install/">インストール</a>
+      <a href="../../../usage/">使い方</a>
+      <a href="../../../visualization/">可視化</a>
+      <a href="../../../reference/" aria-current="page">リファレンス</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+<p>出典：<code>h5fortran/docs/SPEC.md</code></p><div class="reference"><h1 id="h5fortran-仕様">h5fortran 仕様</h1>
+<h2 id="バージョン管理">バージョン管理</h2>
+<p><code>h5fortran</code>と<code>h5xdmf</code>は独立してリリースし、それぞれのSemVerを使う。
+h5fortranの製品バージョンは<code>CMakeLists.txt</code>の<code>project(VERSION)</code>を正本とする。</p>
+<p>HDF5 root属性の<code>scheme_version</code>は両製品のSemVerとは独立したdisk formatの版である。
+HDF5内部レイアウトに非互換変更がある場合だけschemeを更新し、readerは対応する旧
+schemeを残す。CMakeは<code>h5fort_version</code> moduleを生成し、利用者へ次を公開する。</p>
+<ul>
+<li><code>H5FORTRAN_VERSION</code>: 製品の完全なSemVer文字列</li>
+<li><code>H5FORTRAN_VERSION_MAJOR</code>: 製品major</li>
+<li><code>H5FORTRAN_SCHEME_VERSION</code>: 現在書き出す可視化HDF5 scheme</li>
+</ul>
+<p>readerは製品バージョンを決め打ちせず、入力HDF5の<code>scheme_version</code>を読んで登録済み
+scheme実装を選ぶ。これによりmajor更新後も、対応する旧scheme readerを残す限り古い
+HDF5を読める。XDMFの<code>Version="3.0"</code>は外部規格の版であり、製品バージョンとは
+独立している。</p>
+<h2 id="公開-api">公開 API</h2>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th style="text-align: right;">Serial</th>
+<th style="text-align: right;">Parallel</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>allocatable read / write</td>
+<td style="text-align: right;">scalar, 1D–4D</td>
+<td style="text-align: right;">scalar, 1D–4D</td>
+</tr>
+<tr>
+<td>fixed-size read</td>
+<td style="text-align: right;">1D–4D</td>
+<td style="text-align: right;">1D–4D</td>
+</tr>
+<tr>
+<td><code>real(real64)</code></td>
+<td style="text-align: right;">yes</td>
+<td style="text-align: right;">yes</td>
+</tr>
+<tr>
+<td><code>real(real32)</code></td>
+<td style="text-align: right;">yes</td>
+<td style="text-align: right;">yes</td>
+</tr>
+<tr>
+<td><code>integer(int32)</code></td>
+<td style="text-align: right;">yes</td>
+<td style="text-align: right;">yes</td>
+</tr>
+<tr>
+<td><code>integer(int64)</code></td>
+<td style="text-align: right;">yes</td>
+<td style="text-align: right;">yes</td>
+</tr>
+<tr>
+<td><code>logical</code></td>
+<td style="text-align: right;">yes</td>
+<td style="text-align: right;">yes</td>
+</tr>
+<tr>
+<td>scalar <code>character</code></td>
+<td style="text-align: right;">yes</td>
+<td style="text-align: right;">no</td>
+</tr>
+<tr>
+<td>文字列属性・<code>units</code></td>
+<td style="text-align: right;">read / write</td>
+<td style="text-align: right;">no</td>
+</tr>
+<tr>
+<td>数値属性 (<code>real32/64</code>, <code>int32/64</code>)</td>
+<td style="text-align: right;">scalar / 1D read / write</td>
+<td style="text-align: right;">no</td>
+</tr>
+</tbody>
+</table>
+<p>公開する手続き generic は Serial の <code>h5fort_swrite</code> / <code>h5fort_sread</code> / <code>h5fort_sread_fixed</code> と、Parallel の <code>h5fort_pwrite</code> / <code>h5fort_pread</code> / <code>h5fort_pread_fixed</code> である。対応する OOP type は <code>t_h5fort_serial</code> と <code>t_h5fort_parallel</code> である。</p>
+<p>Serial の attribute は dataset、group、root group を対象にできる。手続き API の
+<code>h5fort_write_attribute</code> / <code>h5fort_read_attribute</code> は generic とし、文字列に加えて
+<code>real(real64)</code>、<code>real(real32)</code>、<code>integer(int32)</code>、<code>integer(int64)</code> のscalarと1D配列を扱う。
+数値scalarはscalar dataspace、数値配列は要素数を長さとする1D dataspaceに保存し、
+配列読み込みでは呼び出し側の配列長が一致しなければ失敗する。
+<code>h5fort_get_attribute_info(file_id, obj_path, name, count, hdferr)</code> は読み込み前に属性の
+要素数を <code>integer(int64)</code> で返す。文字列用OOP APIは <code>write_attribute</code> / <code>read_attribute</code>
+とする。既存の複数attribute書き込みAPI <code>h5fort_swrite_attr</code> は互換性のため維持する。
+dataset の <code>write(..., attrs=..., units=...)</code> は同じ文字列attribute実装へ委譲する。</p>
+<p><code>logical</code> はfalseを0、trueを1として <code>integer(int32)</code> に変換して保存する。
+他言語との相互運用は共有仕様の<a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/FORMAT.md#データ型">bool</a>を参照する。</p>
+<h2 id="ファイル-mode">ファイル mode</h2>
+<ul>
+<li><code>H5FORTRAN_FORCE_WRITE = 1</code>: ファイルを truncate create する。Serial dataset write の optional mode に指定した場合は既存 dataset を置換する。</li>
+<li><code>H5FORTRAN_READ_ONLY = 2</code>: 既存ファイルを read-only で開く。</li>
+<li>mode 省略: 既存ファイルを read-write で開く。</li>
+</ul>
+<p>未設定または空の <code>f_name</code>、二重 open、二重 close は失敗し、<code>hdferr</code> を非ゼロにする。</p>
+<h2 id="hdf5ライブラリのライフサイクル">HDF5ライブラリのライフサイクル</h2>
+<p><code>h5fortran</code> のOOP APIと可視化writerは <code>h5open_f</code> / <code>h5close_f</code> を内部で呼ばない。
+利用者がHDF5処理全体の開始時に <code>h5open_f</code>、すべてのHDF5 objectを閉じた後に
+<code>h5close_f</code> を呼ぶ。</p>
+<p>Parallelでは全rankが <code>MPI_Init</code> 後に <code>h5open_f</code> を呼び、<code>h5close_f</code> を
+<code>MPI_Finalize</code> より前に呼ぶ。ファイル単位の <code>%open</code> / <code>%init</code> / <code>%close</code> は
+HDF5ライブラリ全体の開始・終了とは独立している。</p>
+<h2 id="エラー契約">エラー契約</h2>
+<p>公開手続きは成功時に <code>hdferr = 0</code>、失敗時に非ゼロを返す。一連の処理で複数の操作が失敗した場合は、最初の非ゼロ値を保持する。後続の resource close や属性書き込みの成功で先行エラーを消してはならない。</p>
+<p>allocatable read は dataset の rank を確認してから allocate する。fixed-size read は rank と各次元の長さが一致しない場合に失敗する。</p>
+<p><code>h5fort_get_dataset_info(file_id, path, rank, shape, hdferr)</code> はdatasetを読み込まず、
+rankと各次元長（<code>integer(int64), allocatable</code>）を返す。</p>
+<h2 id="parallel-分割">Parallel 分割</h2>
+<p>Parallel 配列は最終次元を MPI rank 間の分割方向とする。最終次元の長さは rank ごとに異なってよく、0 も許可する。それ以外の次元は全 rank で一致しなければならず、不一致は HDF5 collective call より前に拒否する。</p>
+<p>保存形式とrank境界は共有仕様の<a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/FORMAT.md#parallel-の分割レイアウト">Parallel の分割レイアウト</a>を参照する。
+Fortranの最終次元は、ファイル上では第0次元に対応する。</p>
+<p>write時とread時の両方で、<code>data</code> の最終次元長が <code>__partition__</code> の最終値と一致する
+ことを検査する。read時はさらに先頭0、単調非減少、partition長と現在のMPI process数
+の一致を検査し、不一致ならreadを開始せず <code>hdferr</code> を非ゼロにする。</p>
+<p><code>__partition__</code> の名前は <code>H5FORT_DSET_PARTITION_DNAME</code> で変更できる。</p>
+<p><code>t_h5fort_parallel%comm</code> と <code>%info</code> は既定で <code>MPI_COMM_WORLD</code> と
+<code>MPI_INFO_NULL</code> であり、open/read/writeに同じ値を使う。<code>%transfer_mode</code> は既定の
+<code>H5FORTRAN_XFER_COLLECTIVE</code> または <code>H5FORTRAN_XFER_INDEPENDENT</code> を指定できる。
+手続きAPIでは <code>comm=</code> と <code>transfer_mode=</code> のoptional引数で同じ設定を渡す。
+ローカル長0のrankはfile dataspaceを<code>h5sselect_none_f</code>、memory dataspaceを
+<code>H5S_NULL_F</code>で明示的に空選択する。</p>
+<h2 id="visualization-hdf5-writer">Visualization HDF5 writer</h2>
+<p><code>t_hdf5_writer</code> はローカルデータを逐次出力し、<code>t_phdf5_writer</code> は全rankのデータを
+集合的に出力する。Parallel APIを有効にしたビルドでは二つの型を同時に利用できる。
+どちらもXDMF/XMLを生成せず、同じ <code>scheme_version=1</code> のHDF5を出力する。</p>
+<p>一つのビルドでは全targetが同じHDF5を使う。parallel HDF5を使う構成では、
+serial targetにもHDF5由来のMPI依存がある。
+serialライブラリは常にビルドされ、serial APIと <code>t_hdf5_writer</code> は常に公開される。
+parallel APIと <code>t_phdf5_writer</code> は <code>H5FORTRAN_ENABLE_PARALLEL=ON</code> の場合に公開される（既定は <code>OFF</code>）。
+保存レイアウトは共有仕様の<a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/FORMAT.md#可視化レイアウト">可視化レイアウト</a>を参照する。
+geometry は real32/real64/real128、connectivity は int8/int16/int32/int64、
+point/cell data はこれら7 kindの1D・2Dに対応する。</p>
+<p><code>attribute_type=Tensor6</code>（成分数6）の成分順序はParaView/VTKの対称テンソル規約に合わせ、
+<code>XX, YY, ZZ, XY, YZ, XZ</code> とする。利用者はこの順序で第1次元を構成しなければならない。
+<code>h5xdmf</code>は成分を並べ替えない。成分順の共通規約は
+<a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/FORMAT.md#多成分フィールド">テンソル成分の順序</a>を参照する。</p>
+<p>connectivityを持つmeshは <code>mesh_name</code>、XDMFの <code>topology_type</code>、
+<code>nodes_per_element</code> を指定することで一般化する。既定値は
+<code>ugrid</code>、<code>Hexahedron</code>、8とする。少なくとも <code>Tetrahedron</code>、
+<code>Quadrilateral</code>、<code>Triangle</code> を検証対象とする。</p>
+<p>各rankはowned cellだけを出力し、そのcellが参照する全local nodeを
+<code>nodes(:, :)</code> に含める。共有・halo nodeはrank間で重複してよい。connectivityは
+rank-local 0-origin IDとし、writerがrankごとのnode offsetを加えてHDF5全体のIDへ
+変換する。connectivityのlocal IDが <code>[0, num_points)</code> の範囲外なら失敗する。
+ghost cellは重複cellになるため出力しない。</p>
+<p>XDMF3の生成、時系列の制約と空stepの扱いは
+<a href="../postprocess/">POSTPROCESS.md</a> を参照する。</p></div>
+</main>
+
+<footer>
+  h5fortran · h5c · h5cpp · h5xdmf
+</footer>
+
+</body>
+</html>

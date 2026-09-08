@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>インストール — h5</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href=".././">h5</a>
+    <nav>
+      <a href=".././">はじめに</a>
+      <a href="../install/" aria-current="page">インストール</a>
+      <a href="../usage/">使い方</a>
+      <a href="../visualization/">可視化</a>
+      <a href="../reference/">リファレンス</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+<h1>インストール</h1>
+<p class="lede">まず研究室の orca・bero で環境を選び、必要な言語のライブラリと h5xdmf を用意します。h5cpp は h5c を先にインストールしてください。</p>
+<h2>orca・bero：導入済みの HDF5 を使う</h2>
+<p><code>$HOSTNAME</code> で orca・bero のどちらにいるか確認します。両クラスタとも HDF5 は導入済みです。逐次版は <code>hdf5</code>、MPI 対応版は <code>phdf5</code> モジュールを選びます。</p>
+<pre><code class="language-sh">printf &#x27;%s\n&#x27; &quot;$HOSTNAME&quot;
+module avail hdf5 phdf5
+# 逐次版を使う環境
+module load hdf5
+module show hdf5</code></pre>
+<p>並列版を使う場合は、逐次版を外してから切り替えます。コンパイラ・MPI も、その HDF5 を構築した環境と合わせます。モジュールが示す実際の導入先を下の <code>HDF5_ROOT</code> に設定してください。</p>
+<pre><code class="language-sh">module unload hdf5
+module load phdf5
+module show phdf5</code></pre>
+<div class="note"><strong>1 ビルドにつき HDF5 は 1 種類です。</strong>並列構成では Parallel HDF5 を使い、逐次ターゲットだけをリンクしても HDF5 経由の MPI 依存が残ります。MPI に依存しない逐次版が必要なら、Serial HDF5 と並列機能 OFF で構築します。Serial HDF5 と Parallel HDF5 の導入先は分けてください。</div>
+<p>以下では導入先を <code>~/.local/opt/{intel,gnu}/&lt;name&gt;-&lt;version&gt;</code>、版番号がなければ日付 <code>yyyy.mm.dd</code> としています。並列版は <code>h5c-mpi-&lt;version&gt;</code> などの名前で区別できます。</p>
+<h2>ライブラリをインストールする</h2>
+<p>以下のコマンドは対象リポジトリのルートで実行します。以下は Intel LLVM を使う例です。GNU を使う場合は GNU 用の HDF5 とプリセットを選びます。</p>
+<h3>h5fortran</h3>
+<p>出典：<a href="https://github.com/suzuyuyuyu/h5fortran/blob/main/README.md">h5fortran/README.md</a>、<a href="https://github.com/suzuyuyuyu/h5fortran/blob/main/CMakePresets.json">h5fortran/CMakePresets.json</a>。</p>
+<p>Fortran 2008 対応コンパイラ、HDF5 の Fortran・HL コンポーネントが必要です。逐次 API は常に構築され、<code>H5FORTRAN_ENABLE_PARALLEL=ON</code> で並列 API を追加します（既定 OFF）。並列版には MPI Fortran も必要です。</p>
+<pre><code class="language-sh">cmake -S . -B build -DHDF5_ROOT=/path/to/hdf5
+cmake --build build
+cmake --install build --prefix &quot;$HOME/.local/opt/intel/h5fortran-&lt;version&gt;&quot;</code></pre>
+<p><code>/path/to/hdf5</code> と <code>&lt;version&gt;</code> を実際の値に置換してください。逐次専用にするには次を指定します。</p>
+<pre><code class="language-sh">cmake -S . -B build-serial   -DH5FORTRAN_ENABLE_PARALLEL=OFF</code></pre>
+<p>同梱プリセットを使う場合の構成例です。<code>intel</code>／<code>gnu</code> は逐次、<code>intel-mpi</code>／<code>gnu-mpi</code> は並列です。</p>
+<pre><code class="language-sh">cmake --preset intel -DHDF5_ROOT=/path/to/hdf5   -DCMAKE_INSTALL_PREFIX=&quot;$HOME/.local/opt/intel/h5fortran-&lt;version&gt;&quot;
+cmake --build --preset intel
+cmake --install build/intel</code></pre>
+<p>API とリンク先は <a href="../reference/h5fortran/usage/">h5fortran の使い方</a>、逐次・並列ターゲットの違いは <a href="../reference/h5fortran/usage-visualization/">可視化用 HDF5 出力</a>を参照してください。</p>
+<h3>h5c</h3>
+<p>出典：<a href="https://github.com/suzuyuyuyu/h5c/blob/main/README.md">h5c/README.md</a>。C11 対応コンパイラ、CMake 3.20 以上、HDF5 の C コンポーネントが必要です。</p>
+<p><code>misc/CMakeUserPresets.json.template</code> をコピーし、<code>HDF5_ROOT</code> と <code>CMAKE_INSTALL_PREFIX</code> を編集します。<code>CMakeUserPresets.json</code> はマシン固有のパスを書く場所なので、テンプレートとして別に用意されています。</p>
+<pre><code class="language-sh">cp misc/CMakeUserPresets.json.template CMakeUserPresets.json
+$EDITOR CMakeUserPresets.json
+cmake --preset my-intel
+cmake --build --preset my-intel
+cmake --install build/my-intel</code></pre>
+<p>GNU では <code>my-gnu</code>、並列版では <code>my-intel-mpi</code> に切り替えます（最後の <code>build/</code> 以下も同じ名前）。並列版は <code>H5C_ENABLE_PARALLEL=ON</code>、既定は OFF です。テンプレートの HDF5 版番号は例なので、モジュールの実際の導入先へ修正します。</p>
+<p><a href="../reference/h5c/usage/">h5c のターゲットと API</a></p>
+<h3>h5cpp：h5c の導入後</h3>
+<p>出典：<a href="https://github.com/suzuyuyuyu/h5cpp/blob/main/README.md">h5cpp/README.md</a>。C++17 対応コンパイラと CMake 3.20 以上を用意します。先にインストールした h5c と、その h5c と同じ HDF5 の導入先を <code>CMAKE_PREFIX_PATH</code> にセミコロン区切りで設定します。<code>CMAKE_INSTALL_PREFIX</code> は h5cpp 自身の導入先です。</p>
+<pre><code class="language-sh">cp misc/CMakeUserPresets.json.template CMakeUserPresets.json
+$EDITOR CMakeUserPresets.json
+cmake --preset my-intel
+cmake --build --preset my-intel
+cmake --install build/my-intel</code></pre>
+<p>並列版は <code>my-intel-mpi</code> を選び、<code>H5C_ENABLE_PARALLEL=ON</code> で導入した h5c を指定します。<code>H5CPP_ENABLE_PARALLEL</code> は既定 OFF、並列プリセットで ON です。</p>
+<p>GNU 用にはユーザープリセットで <code>gnu</code> または <code>gnu-mpi</code> を継承し、対応する依存先を指定します。テンプレートには <code>my-gnu</code> はありません。詳細は <a href="../reference/h5cpp/usage/#ビルド設定">h5cpp のビルド設定</a>を参照してください。</p>
+<h3 id="h5xdmf">h5xdmf</h3>
+<p>出典：<a href="https://github.com/suzuyuyuyu/h5xdmf/blob/main/README.md">h5xdmf/README.md</a>。Python 3.10 以上と uv を用意し、専用環境へインストールします。</p>
+<pre><code class="language-sh">uv tool install git+https://github.com/suzuyuyuyu/h5xdmf.git
+h5xdmf --help</code></pre>
+<p>次は <a href="../usage/#dims">配列の次元順序と使い方</a>、出力済みなら <a href="../visualization/">ParaView で開く手順</a>へ進みます。</p>
+<h2>orca・bero 以外のマシン</h2>
+<p>使用するコンパイラに対応した HDF5 を先に用意します。h5fortran には Fortran・HL、h5c には C コンポーネントが必要です。並列出力には Parallel HDF5 と対応する MPI が必要です。HDF5 の導入先も <code>~/.local/opt/{intel,gnu}/hdf5-&lt;version&gt;</code> などとし、上記の <code>HDF5_ROOT</code>／<code>CMAKE_PREFIX_PATH</code> に指定します。</p>
+<p>その後は同じライブラリ導入手順を使います。</p>
+
+</main>
+
+<footer>
+  h5fortran · h5c · h5cpp · h5xdmf
+</footer>
+
+</body>
+</html>

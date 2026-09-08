@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>h5fortran / TEST — h5</title>
+<link rel="stylesheet" href="../../../assets/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href="../../.././">h5</a>
+    <nav>
+      <a href="../../.././">はじめに</a>
+      <a href="../../../install/">インストール</a>
+      <a href="../../../usage/">使い方</a>
+      <a href="../../../visualization/">可視化</a>
+      <a href="../../../reference/" aria-current="page">リファレンス</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+<p>出典：<code>h5fortran/docs/TEST.md</code></p><div class="reference"><h1 id="テスト">テスト</h1>
+<pre><code class="language-sh">cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build
+ctest --test-dir build --output-on-failure
+</code></pre>
+<p>テスト範囲は次のとおり。</p>
+<ul>
+<li>Serial: real64 scalar と 1D–4D、real32、int32、logical、文字列</li>
+<li>Serial: logical fixed read、属性、units、中間 group、強制上書き</li>
+<li>Serial: 不正 path、rank/shape 不一致、read-only write、未設定ファイル名、二重 open/close</li>
+<li>Parallel（4 rank）: 1D/2D、real32、int32、logical、fixed read、0 要素の rank</li>
+<li>Parallel: 非分割次元不一致の拒否、path/rank エラー、OOP read-only と状態エラー</li>
+<li>Parallel metadata: <code>__partition__</code> の生成、旧metadataの不在、
+  <code>data</code>最終次元とpartition末尾の不一致検出</li>
+<li>Visualization HDF5（2 rank）: scheme metadata、複数mesh group、geometry/connectivity、point/cell data</li>
+<li>Visualization topology: Hexahedron、Tetrahedron、Quadrilateral、Triangle、Polyvertex</li>
+<li>fypp 生成元と生成済みソースの同期</li>
+<li>install 後の外部 consumer configure/build</li>
+<li>Serial / Parallel / Visualization example のコンパイル</li>
+</ul>
+<p>MPI test は CMake が検出した <code>MPIEXEC_EXECUTABLE</code> と <code>MPIEXEC_NUMPROC_FLAG</code> を使う。実行環境が socket 作成や process spawn を禁止している場合、Parallel test のみ実行環境側の許可が必要になる。</p>
+<p>Pythonポストプロセスの単体テストは独立した<code>h5xdmf</code>リポジトリで実行する。</p>
+<p>可視化出力からポストプロセスまでの確認方法は
+<a href="https://github.com/suzuyuyuyu/h5fortran/blob/main/example/serial-viz/README.md">逐次例</a>と<a href="https://github.com/suzuyuyuyu/h5fortran/blob/main/example/parallel-viz/README.md">並列例</a>を参照する。
+クラスタではMPIを使うテスト・例をジョブスクリプトから実行し、ログインノードでは実行しない。</p></div>
+</main>
+
+<footer>
+  h5fortran · h5c · h5cpp · h5xdmf
+</footer>
+
+</body>
+</html>

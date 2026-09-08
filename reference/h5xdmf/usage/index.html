@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>h5xdmf / USAGE — h5</title>
+<link rel="stylesheet" href="../../../assets/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href="../../.././">h5</a>
+    <nav>
+      <a href="../../.././">はじめに</a>
+      <a href="../../../install/">インストール</a>
+      <a href="../../../usage/">使い方</a>
+      <a href="../../../visualization/">可視化</a>
+      <a href="../../../reference/" aria-current="page">リファレンス</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+<p>出典：<code>h5xdmf/docs/USAGE.md</code></p><div class="reference"><h1 id="h5xdmf-の使い方">h5xdmf の使い方</h1>
+<p>インストールは <a href="https://github.com/suzuyuyuyu/h5xdmf/blob/main/README.md#インストール">README</a> を参照してください。
+h5fortran・h5c・h5cppの可視化writerが出力したsnapshot HDF5をそのまま入力できます。</p>
+<h2 id="入力と出力">入力と出力</h2>
+<p>1 stepにつき1つのsnapshot HDF5を用意します。snapshotがデータの正本であり、
+<code>metadata.h5</code> はh5xdmfが作る再生成可能な索引です。producerから直接更新しません。</p>
+<pre><code class="language-sh">h5xdmf &quot;result/seq*.h5&quot; --metadata result/metadata.h5 --outdir result
+</code></pre>
+<p>globは辞書順に展開されるため、同じrunの番号付きファイルはゼロ埋め幅を統一します。
+初回はsnapshotのshape・dtype・属性を読み、再実行時は未登録ファイルだけを追加します。
+field本体は読み込みません。同じ名前のsnapshotを上書きした場合は <code>--rebuild</code> が必要です。</p>
+<p>mesh group名ごとに <code>&lt;mesh_name&gt;.xdmf</code> が生成されます。例えば <code>fluid</code> と
+<code>soil_particles</code> は <code>fluid.xdmf</code> と <code>soil_particles.xdmf</code> になり、ParaViewで
+個別に開くか、両方を重ねて表示できます。XDMFはsnapshot内のdatasetを相対パスで
+参照するため、可視化時にもsnapshotを保持してください。</p>
+<h2 id="更新と検査">更新と検査</h2>
+<ul>
+<li><code>--rebuild</code>: snapshotから索引を全再構築します。</li>
+<li><code>--generate-only --metadata result/metadata.h5</code>: snapshotを走査せずXDMFだけを再生成します。入力globは指定しません。</li>
+<li><code>--prune</code>: 存在しないsnapshotを索引から除外してから更新します。</li>
+<li><code>--check "result/seq*.h5"</code>: snapshotを読み取り専用で検査します。索引・XDMF・出力ディレクトリは作りません。</li>
+</ul>
+<p><code>--check</code> はscheme version、geometry、fieldの成分数とentity数、存在する
+<code>__partition__</code> の境界を検査します。問題はファイルとHDF5オブジェクトパスごとに
+全件表示し、1件でもあれば終了status 1を返します。旧形式の <code>h5xdmf validate</code> も利用できます。
+書き込みが完了したsnapshotを入力してください。</p>
+<h2 id="時系列の制約">時系列の制約</h2>
+<p>同じmesh名ではtopology、nodes per element、field構成・順序、dtype、Node/Cell
+centering、Scalar/Vector/Tensor種別を固定します。time、node数、element数・粒子数は
+stepごとに変えられます。meshが存在しないstepや、後から現れるmeshも扱えます。
+MPI rankのデータはproducerが連結済みの一つの論理meshとして扱います。
+同一mesh名の複数空間ブロックとAMRはscheme v1の対象外です。</p>
+<p>node数またはelement数が0のstepを含むmeshは、全stepをSpatial Collectionで包みます。
+非空stepはUniform Gridを1つ、空stepは子Gridを持たず、空datasetをXDMFから参照しません。
+HDF5のentity数は変更しません。</p>
+<h2 id="独自producerの入力形式">独自producerの入力形式</h2>
+<p>共有契約の<a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/FORMAT.md#可視化レイアウト">可視化レイアウト</a>を参照してください。
+製品のSemVerとHDF5 root属性の <code>scheme_version</code> は独立しています。
+meshはroot直下で <code>geometry</code> を持つgroupです。connectivityのない点群はPolyvertexとして扱います。
+fieldの <code>attribute_type</code> 属性を優先します。省略時は1D配列をScalar、
+2D配列を第2次元の成分数（1 / 3 / 6 / 9）からScalar / Vector / Tensor6 / Tensorと判定します。
+Tensor6は <code>XX, YY, ZZ, XY, YZ, XZ</code> の順で渡してください。
+h5xdmfは成分を並べ替えません。<a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/FORMAT.md#多成分フィールド">テンソル成分の順序</a>を参照してください。</p>
+<h2 id="python-api">Python API</h2>
+<pre><code class="language-python">from h5xdmf import sample
+from h5xdmf.hdf5 import read_series_glob
+
+sample.write_series(&quot;phdf5&quot;, nsteps=5)
+series = read_series_glob(&quot;phdf5/seq*.h5&quot;, load_data=False)
+for snap in series:
+    print(snap.name, snap.time, [b.name for b in snap.mesh_blocks])
+</code></pre>
+<p><code>load_data=False</code> は配列本体をロードせず、shape・dtype・HDF5パスを取得します。</p></div>
+</main>
+
+<footer>
+  h5fortran · h5c · h5cpp · h5xdmf
+</footer>
+
+</body>
+</html>

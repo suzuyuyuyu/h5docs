@@ -1,0 +1,70 @@
+name: pages
+
+# Publishing happens when something lands on main -- that is, after a pull
+# request is merged, not when it is opened. Deploying an unmerged branch would
+# put unreviewed pages on the public site.
+#
+# A pull request only gets the checks below; nothing it contains is published.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Every internal link resolves
+        run: |
+          set -euo pipefail
+          fail=0
+          # href="..." within the site, minus anchors, mail and absolute URLs.
+          while IFS= read -r page; do
+            grep -oE 'href="[^"#:]+(#[^"]*)?"' "$page" \
+              | sed -E 's/^href="//; s/"$//; s/#.*$//' \
+              | while read -r target; do
+                  [ -n "$target" ] || continue
+                  resolved="$(dirname "$page")/$target"
+                  if [ ! -e "$resolved" ]; then
+                    echo "broken: $page -> $target"
+                    fail=1
+                  fi
+                done
+          done < <(find . -name '*.html' -not -path './.git/*')
+          test "$fail" -eq 0
+
+      - name: The reference pages exist
+        run: |
+          test -f reference/index.html
+          test "$(find reference -name '*.html' | wc -l)" -gt 1
+
+  deploy:
+    # Merged, not merely proposed.
+    if: github.event_name != 'pull_request'
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4

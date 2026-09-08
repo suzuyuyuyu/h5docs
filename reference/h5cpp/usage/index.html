@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>h5cpp / USAGE — h5</title>
+<link rel="stylesheet" href="../../../assets/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href="../../.././">h5</a>
+    <nav>
+      <a href="../../.././">はじめに</a>
+      <a href="../../../install/">インストール</a>
+      <a href="../../../usage/">使い方</a>
+      <a href="../../../visualization/">可視化</a>
+      <a href="../../../reference/" aria-current="page">リファレンス</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+<p>出典：<code>h5cpp/docs/USAGE.md</code></p><div class="reference"><h1 id="h5cpp-の使い方">h5cpp の使い方</h1>
+<p>ビルドの基本は <a href="https://github.com/suzuyuyuyu/h5cpp/blob/main/README.md">README</a> を参照してください。
+保存形式は <a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/FORMAT.md">h5c の FORMAT.md</a> と共通です。</p>
+<h2 id="ビルド設定">ビルド設定</h2>
+<p><code>CMakeUserPresets.json</code> で <code>intel</code> / <code>gnu</code>、並列版では <code>intel-mpi</code> / <code>gnu-mpi</code>
+を継承し、<code>CMAKE_PREFIX_PATH</code> と <code>CMAKE_INSTALL_PREFIX</code> を設定します。</p>
+<p>C++20 は <code>H5CPP_CXX_STANDARD=20</code> または <code>intel-cxx20</code> preset で選択します。
+標準ライブラリが対応していれば <code>h5cpp::span</code> は <code>std::span</code> になります。
+未対応でも h5cpp の span インターフェースを使えます。
+たとえば icpx と GCC 8.5 の libstdc++ の組み合わせでは、C++20 モードでも
+<code>std::span</code> は使えません。必要なら新しい libstdc++ を選択してください。</p>
+<h2 id="ターゲットとヘッダー">ターゲットとヘッダー</h2>
+<table>
+<thead>
+<tr>
+<th>target</th>
+<th>用途・依存先</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>h5cpp::h5cpp_serial</code></td>
+<td>逐次 API。<code>h5c::h5c_serial</code> に依存</td>
+</tr>
+<tr>
+<td><code>h5cpp::h5cpp_parallel</code></td>
+<td>並列 API。serial と <code>h5c::h5c_parallel</code> に依存。<code>H5CPP_ENABLE_PARALLEL=ON</code> のとき提供</td>
+</tr>
+<tr>
+<td><code>h5cpp::h5cpp</code></td>
+<td>逐次構成では serial、並列構成では serial + parallel</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>ヘッダー</th>
+<th>型</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>h5cpp/h5cpp.hpp</code></td>
+<td><code>h5cpp::file</code></td>
+</tr>
+<tr>
+<td><code>h5cpp/h5cpp_mpi.hpp</code></td>
+<td><code>h5cpp::parallel_file</code></td>
+</tr>
+<tr>
+<td><code>h5cpp/h5cpp_viz.hpp</code></td>
+<td><code>h5cpp::viz</code></td>
+</tr>
+<tr>
+<td><code>h5cpp/h5cpp_viz_mpi.hpp</code></td>
+<td><code>h5cpp::parallel_viz</code></td>
+</tr>
+</tbody>
+</table>
+<p>HDF5 の include / library パスは target から引き継がれます。
+リンクまで MPI 不要にするには Serial HDF5 で構成した h5c を使い、
+<code>H5CPP_ENABLE_PARALLEL=OFF</code> にしてください。</p>
+<h2 id="所有権と例外">所有権と例外</h2>
+<p><code>file</code>、<code>parallel_file</code>、<code>viz</code>、<code>parallel_viz</code> はファイルを所有し、
+コピーできません。move で所有権を移します。デストラクタはファイルを閉じ、
+例外を投げません。close の失敗を確認するには明示的に <code>close()</code> を呼びます。
+並列オブジェクトは全ランクで close をそろえ、MPI 終了前に破棄してください。</p>
+<p><code>c_handle()</code> とファイルの <code>hid()</code> は借用ハンドルです。呼び出し側で解放せず、
+所有するオブジェクトが閉じられた後は使わないでください。
+読み込みで返る <code>std::vector</code>・<code>std::string</code> は呼び出し側が所有します。</p>
+<p>I/O の失敗は <code>std::runtime_error</code> を継承する <code>h5cpp::error</code> で通知されます。
+<code>what()</code> で説明、<code>status()</code> で h5c のエラーコードを確認できます。</p>
+<pre><code class="language-cpp">h5cpp::file f(&quot;result.h5&quot;, h5cpp::mode::read);
+try {
+    auto values = f.read&lt;double&gt;(&quot;/optional&quot;);
+} catch (const h5cpp::error&amp; e) {
+    if (e.status() != H5C_ERR_NOT_FOUND) throw;
+}
+</code></pre>
+<h2 id="コンテナによる読み書き">コンテナによる読み書き</h2>
+<p><code>mode::read</code> は既存ファイルの読み取り、<code>readwrite</code> は読み書き、
+<code>truncate</code> は新規作成または既存ファイルの切り詰めです。</p>
+<pre><code class="language-cpp">h5cpp::file f(&quot;result.h5&quot;, h5cpp::mode::truncate);
+std::vector&lt;double&gt; values = {1, 2, 3, 4, 5, 6};
+f.write(&quot;/values&quot;, values, {3, 2});
+auto got = f.read&lt;double&gt;(&quot;/values&quot;);
+auto meta = f.info(&quot;/values&quot;);    // dims, type, count
+f.read_into(&quot;/values&quot;, values, meta.dims);
+f.close();
+</code></pre>
+<p><code>shape</code> は <code>std::vector&lt;std::size_t&gt;</code> です。
+<a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/FORMAT.md#次元順序">次元順序</a> に従って指定します。
+<code>write(path, vector)</code> では 1 次元になります。shape を渡す場合、vector の
+要素数は shape の積と一致させます。<code>read_into()</code> は既存バッファに読み込みます。
+生ポインタ版もあり、<code>std::array</code> などは <code>.data()</code> と shape を渡して使えます。
+生ポインタではバッファ長を検査しないため、必要な要素数を確保してください。
+既存 dataset を異なる shape で置き換える場合は <code>write()</code> の末尾に <code>true</code> を渡します。</p>
+<p>スカラーには <code>write_scalar()</code> / <code>read_scalar&lt;T&gt;()</code>、文字列には
+<code>write_string()</code> / <code>read_string()</code> を使います。属性は <code>write_attr_str()</code>、
+<code>write_attr_scalar()</code>、<code>write_attr_array()</code> と対応する read メソッドを使います。
+数値配列属性の入出力は <code>std::vector&lt;T&gt;</code>、要素数の問い合わせは <code>attr_length()</code> です。
+文字列の相互運用制約は <a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/FORMAT.md#データ型">保存形式</a> を参照してください。</p>
+<p>テンプレートの対応型は <code>float</code>、<code>double</code>、<code>std::int32_t</code>、<code>std::int64_t</code>、
+<code>h5c_bool_t</code> です。<code>bool</code> と <code>std::vector&lt;bool&gt;</code> は使えません。</p>
+<pre><code class="language-cpp">std::vector&lt;h5c_bool_t&gt; flags = {H5C_TRUE, H5C_FALSE};
+h5cpp::file flags_file(&quot;flags.h5&quot;, h5cpp::mode::truncate);
+flags_file.write(&quot;/flags&quot;, flags);
+flags_file.close();
+</code></pre>
+<h2 id="成分配列と-span">成分配列と span</h2>
+<p>成分ごとに分かれたバッファは、長さ付きの <code>h5cpp::span</code> で渡せます。
+span はバッファを所有しないため、呼び出しが終わるまで元の配列を有効に保ちます。
+各成分の長さは一致させてください。</p>
+<pre><code class="language-cpp">h5cpp::file f(&quot;velocity.h5&quot;, h5cpp::mode::truncate);
+std::vector&lt;double&gt; u(n), v(n), w(n);
+f.write_interleaved&lt;double&gt;(&quot;/velocity&quot;, {u, v, w});
+f.read_interleaved&lt;double&gt;(&quot;/velocity&quot;, {u, v, w});
+auto y = f.read_component&lt;double&gt;(&quot;/velocity&quot;, 1);  // 成分番号は 0-origin
+f.close();
+</code></pre>
+<p>ポインタと長さからは <code>h5cpp::span&lt;const double&gt;(ptr, n)</code> を作れます。
+保存配置とテンソル成分順は <a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/FORMAT.md#多成分フィールド">多成分フィールド</a>
+を参照してください。</p>
+<h2 id="並列-io">並列 I/O</h2>
+<p>MPI 初期化後に <code>parallel_file</code> を開きます。</p>
+<pre><code class="language-cpp">#include &lt;h5cpp/h5cpp_mpi.hpp&gt;
+
+std::vector&lt;double&gt; local(nlocal * 3);
+h5cpp::parallel_file f(&quot;out.h5&quot;, h5cpp::mode::truncate);  // MPI_COMM_WORLD
+f.write(&quot;/coords&quot;, local, {nlocal, 3});
+auto meta = f.info(&quot;/coords&quot;);       // local / global の dataset_info
+auto block = f.local_block(&quot;/coords&quot;); // offset, count
+auto got = f.read&lt;double&gt;(&quot;/coords&quot;);
+f.close();
+</code></pre>
+<p>communicator と MPI-IO hint はコンストラクタの第 3・第 4 引数に渡します。
+communicator は close まで有効に保ってください。
+分割条件・collective の呼び出し規則は <a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/USAGE.md#parallel-io">h5c の並列 API</a>
+と共通です。C++ ではコンストラクタ、close、読み書き、<code>info()</code>、<code>local_block()</code>、
+<code>partition()</code> を全ランクでそろえます。属性を書く場合も全ランクで同じ値を渡します。
+<code>set_collective(false)</code> は転送モードを変えます。全ランクで同じ設定にしてください。
+<code>exists()</code>、<code>attr_exists()</code>、<code>is_collective()</code>、<code>comm()</code> はローカルな参照です。</p>
+<p><code>partition()</code> は全ランクの境界を vector で返します。
+<code>read_rows&lt;T&gt;(path, offset, count)</code> は通常 dataset の連続行を vector に読み込み、
+保存済み partition を参照しません。成分配列には逐次版と同じ
+<code>write_interleaved()</code> / <code>read_interleaved()</code> を使えます。</p>
+<p>コンテナ長などの C++ 側の検査はローカルに例外を投げます。
+一部ランクだけ例外で抜け、他ランクが collective 操作を続けないようにしてください。</p>
+<h2 id="可視化">可視化</h2>
+<p>可視化用 HDF5 の出力は <a href="../usage-visualization/">USAGE-visualization.md</a> を
+参照してください。逐次の <code>h5cpp::viz</code> と、それを継承して communicator を取る
+<code>h5cpp::parallel_viz</code> の使い方を扱っています。</p></div>
+</main>
+
+<footer>
+  h5fortran · h5c · h5cpp · h5xdmf
+</footer>
+
+</body>
+</html>

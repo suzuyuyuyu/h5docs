@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>h5c / USAGE-visualization — h5</title>
+<link rel="stylesheet" href="../../../assets/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href="../../.././">h5</a>
+    <nav>
+      <a href="../../.././">はじめに</a>
+      <a href="../../../install/">インストール</a>
+      <a href="../../../usage/">使い方</a>
+      <a href="../../../visualization/">可視化</a>
+      <a href="../../../reference/" aria-current="page">リファレンス</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+<p>出典：<code>h5c/docs/USAGE-visualization.md</code></p><div class="reference"><h1 id="可視化出力">可視化出力</h1>
+<p>メッシュとフィールドを HDF5 に書き、<a href="https://github.com/suzuyuyuyu/h5xdmf/blob/main/README.md">h5xdmf</a> で
+ParaView 用の XDMF を生成します。保存形式は <a href="../format/#可視化レイアウト">FORMAT.md</a>、
+リンクする target は <a href="../usage/#リンクするターゲットとヘッダー">USAGE.md</a> を参照してください。</p>
+<h2 id="出力の手順">出力の手順</h2>
+<p>1 ステップにつき 1 ファイルを作り、<code>time</code> に時刻を渡します。
+既存ファイルは切り詰められます。出力先ディレクトリは事前に作成してください。
+以下は呼び出し順の例です。各関数の戻り値を確認してください。</p>
+<pre><code class="language-c">#include &lt;h5c/h5c_viz.h&gt;
+
+h5c_viz_t *viz = NULL;
+h5c_viz_mesh_t mesh = {0};
+h5c_viz_open(&quot;result/seq000000.h5&quot;, t, &amp;viz);
+
+mesh.kind              = H5C_VIZ_UNSTRUCTURED;
+mesh.name              = &quot;fluid&quot;;
+mesh.topology          = &quot;Tetrahedron&quot;;
+mesh.nodes_per_element = 4;
+mesh.num_points        = npoints;
+mesh.num_cells         = ncells;
+h5c_viz_begin_mesh(viz, &amp;mesh);
+
+h5c_viz_write_nodes(viz, nodes, H5C_F64);
+h5c_viz_write_connectivity(viz, conn, H5C_I32);
+h5c_viz_write_point_data(viz, &quot;Pressure&quot;, p, H5C_F64, 1);
+h5c_viz_write_point_data(viz, &quot;Velocity&quot;, v, H5C_F64, 3);
+h5c_viz_write_cell_data(viz, &quot;SubdomainID&quot;, id, H5C_I32, 1);
+
+h5c_status_t failed = h5c_viz_status(viz);
+h5c_status_t closed = h5c_viz_close(viz);
+</code></pre>
+<p><code>h5c_viz_status()</code> は最初の失敗、<code>h5c_viz_close()</code> は close 自体の成否を返します。
+close 後はハンドルを使えません。<a href="../usage/#エラー処理">エラー処理</a> も参照してください。</p>
+<h2 id="メッシュとバッファ">メッシュとバッファ</h2>
+<ul>
+<li>点数には、そのランクの cell が参照する全ローカル節点を含めます。
+  ランク境界での節点の重複は許容されます。</li>
+<li>cell 数は所有する cell の数です。ghost cell は出力しません。</li>
+<li>connectivity はランク内の <strong>0-origin</strong> 節点番号を渡します。
+  範囲外は拒否されます。1-origin や変換済みの global ID を渡さないでください。</li>
+<li>座標は <code>num_points * 3</code> 要素を <code>x0, y0, z0, x1, y1, z1, ...</code> の順に渡します。
+  connectivity は <code>num_cells * nodes_per_element</code> 要素です。</li>
+<li>field は点数または cell 数 × 成分数のバッファです。
+  成分順は <a href="../format/#多成分フィールド">FORMAT.md</a> に従います。</li>
+</ul>
+<p>座標を x/y/z で別々に持つ場合は <code>h5c_viz_write_nodes_comps()</code>、
+field には <code>h5c_viz_write_point_data_comps()</code> / <code>h5c_viz_write_cell_data_comps()</code>
+を使い、各成分のポインタを配列で渡します。</p>
+<p>点群は <code>H5C_VIZ_POLYDATA</code>、<code>num_cells = 0</code> にし、connectivity と cell data は書きません。
+別のメッシュを追加するには、異なる <code>name</code> で <code>h5c_viz_begin_mesh()</code> を呼びます。
+<code>name</code> 未指定時は非構造格子が <code>ugrid</code>、点群が <code>polydata</code> です。
+非構造格子の topology 未指定時は <code>Hexahedron</code>、節点数 0 は 8 として扱います。</p>
+<h2 id="並列出力">並列出力</h2>
+<p>MPI 初期化後、open を次に置き換えます。以降のメッシュ・書き込み・close は共通です。</p>
+<pre><code class="language-c">#include &lt;h5c/h5c_viz_mpi.h&gt;
+
+h5c_viz_popen(&quot;result/seq000000.h5&quot;, t, MPI_COMM_WORLD, MPI_INFO_NULL, &amp;viz);
+</code></pre>
+<p>全ランクが同じ順序で、同じメッシュ名・field 名を指定して操作します。
+時刻・topology・成分数などの共通 metadata もそろえてください。
+点数・cell 数はランクごとに異なってよく、0 でも同じ呼び出しに参加します。
+<code>h5c_viz_status()</code> はローカルな参照です。
+<code>h5c_viz_offsets()</code> で現在のメッシュの point / cell offset を取得できます。
+communicator は close まで有効に保ち、MPI は close 後に終了してください。</p>
+<h2 id="後処理">後処理</h2>
+<p><a href="https://github.com/suzuyuyuyu/h5xdmf/blob/main/README.md#インストール">h5xdmf のインストール方法</a> に従って用意し、
+出力した時系列を指定します。</p>
+<pre><code class="language-sh">h5xdmf &quot;result/seq*.h5&quot; --metadata result/metadata.h5 --outdir result
+</code></pre>
+<p>利用できるプログラムは <a href="https://github.com/suzuyuyuyu/h5c/tree/main/example/serial-viz">逐次例</a> と
+<a href="https://github.com/suzuyuyuyu/h5c/tree/main/example/parallel-viz">並列例</a> を参照してください。</p></div>
+</main>
+
+<footer>
+  h5fortran · h5c · h5cpp · h5xdmf
+</footer>
+
+</body>
+</html>

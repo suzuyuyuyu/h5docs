@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>h5c / USAGE — h5</title>
+<link rel="stylesheet" href="../../../assets/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href="../../.././">h5</a>
+    <nav>
+      <a href="../../.././">はじめに</a>
+      <a href="../../../install/">インストール</a>
+      <a href="../../../usage/">使い方</a>
+      <a href="../../../visualization/">可視化</a>
+      <a href="../../../reference/" aria-current="page">リファレンス</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+<p>出典：<code>h5c/docs/USAGE.md</code></p><div class="reference"><h1 id="h5c-の使い方">h5c の使い方</h1>
+<p>概要とビルド方法は <a href="https://github.com/suzuyuyuyu/h5c/blob/main/README.md">README.md</a>、ファイルフォーマットの仕様は
+<a href="../format/">FORMAT.md</a> を参照してください。この文書は API の使い方を扱います。
+以下の断片例ではエラー分岐を省略しています。実際のコードでは
+<a href="#エラー処理">エラー処理</a> に従って戻り値を確認してください。</p>
+<h2 id="リンクするターゲットとヘッダー">リンクするターゲットとヘッダー</h2>
+<table>
+<thead>
+<tr>
+<th>ターゲット</th>
+<th>提供する API</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>h5c::h5c_serial</code></td>
+<td><code>h5c.h</code> の直列 I/O と <code>h5c_viz.h</code> の可視化操作</td>
+</tr>
+<tr>
+<td><code>h5c::h5c_parallel</code></td>
+<td><code>h5c_mpi.h</code> の並列 I/O と <code>h5c_viz_mpi.h</code> の <code>h5c_viz_popen()</code>。直列ターゲットに依存し、並列構成で提供</td>
+</tr>
+<tr>
+<td><code>h5c::h5c</code></td>
+<td>互換用。直列構成では serial、並列構成では serial + parallel</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-cmake">find_package(h5c CONFIG REQUIRED)
+target_link_libraries(my_program PRIVATE h5c::h5c_serial)
+</code></pre>
+<p>並列構成の serial ターゲットも HDF5 経由で MPI に依存します。
+リンクまで MPI 不要にするには Serial HDF5 と <code>H5C_ENABLE_PARALLEL=OFF</code> を使います。
+HDF5 の型 <code>hid_t</code> は公開ヘッダーから利用できます。</p>
+<h2 id="初期化">初期化</h2>
+<p><code>h5c_init()</code> は省略できます。HDF5 のエラースタックも表示したい場合は
+<code>h5c_set_error_verbosity(1)</code> を呼びます。</p>
+<pre><code class="language-c">h5c_init();                        /* 任意 */
+h5c_set_error_verbosity(1);        /* HDF5 のエラースタックも見たいとき */
+...
+h5c_finalize();                    /* 任意。H5close() を呼ぶ */
+</code></pre>
+<h2 id="ファイル">ファイル</h2>
+<p>mode は 3 値で、<strong>常に明示</strong>します。</p>
+<pre><code class="language-c">h5c_file_t *f = NULL;
+h5c_status_t st = h5c_open(&quot;result.h5&quot;, H5C_TRUNCATE, &amp;f);
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>mode</th>
+<th>意味</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>H5C_READ</code></td>
+<td>既存ファイルを読み取り専用で開く</td>
+</tr>
+<tr>
+<td><code>H5C_READWRITE</code></td>
+<td>既存ファイルを読み書きで開く</td>
+</tr>
+<tr>
+<td><code>H5C_TRUNCATE</code></td>
+<td>新規作成し、既存ファイルを切り詰める</td>
+</tr>
+</tbody>
+</table>
+<p>既存 HDF5 コードに組み込む場合は、自分で管理している <code>hid_t</code> を借用できます。</p>
+<pre><code class="language-c">h5c_file_t *wrapper = NULL;
+h5c_file_from_hid(my_fid, &amp;wrapper);   /* 借用。close しない */
+...
+h5c_close(wrapper);                    /* wrapper だけ解放。my_fid は生きている */
+</code></pre>
+<p>逆方向は <code>h5c_file_hid()</code> です。</p>
+<h2 id="書き込み">書き込み</h2>
+<p>中間 group は自動生成されます。</p>
+<pre><code class="language-c">double values[6] = { 1, 2, 3, 4, 5, 6 };
+size_t dims[2]   = { 3, 2 };
+
+h5c_write_f64(f, &quot;/rank/two&quot;, values, 2, dims);
+h5c_write_f64_1d(f, &quot;/rank/one&quot;, values, 3);
+h5c_write_f64_scalar(f, &quot;/scalar/value&quot;, 42.5);
+</code></pre>
+<p>型別の <code>scalar</code> / <code>1d</code> / ND 関数を使えます。flags を指定する場合は
+<code>h5c_write()</code> を使います。</p>
+<p>既存 dataset への書き込みは、<strong>形状が一致すればその場に書きます</strong>。
+形状が違う場合は <code>H5C_ERR_SHAPE_MISMATCH</code> になり、置き換えるには
+<code>H5C_WRITE_REPLACE</code> を渡します。</p>
+<pre><code class="language-c">h5c_write(f, &quot;/rank/one&quot;, other, H5C_F64, 1, &amp;n, H5C_WRITE_REPLACE);
+</code></pre>
+<h2 id="読み込み">読み込み</h2>
+<p>形状を問い合わせ、必要な要素数のバッファを確保します。</p>
+<pre><code class="language-c">h5c_dataset_info_t info;
+if (h5c_dataset_info(f, &quot;/rank/two&quot;, &amp;info) != H5C_OK) { /* ... */ }
+
+/* info.rank, info.dims[], info.type, info.count */
+double *buf = malloc(info.count * sizeof *buf);
+h5c_read_f64(f, &quot;/rank/two&quot;, buf, info.rank, info.dims);
+free(buf);
+</code></pre>
+<p>形状は<strong>厳密に一致していなければなりません</strong>。次元を入れ替えて渡すと
+<code>H5C_ERR_SHAPE_MISMATCH</code> になります。黙って解釈し直すことはしません。</p>
+<p>前処理・後処理では確保を任せられます。所有権が移るので <code>h5c_free()</code> で
+解放してください。</p>
+<pre><code class="language-c">double *buf = NULL;
+h5c_read_alloc(f, &quot;/rank/two&quot;, H5C_F64, (void **)&amp;buf, &amp;info);
+h5c_free(buf);
+</code></pre>
+<p>空の dataset でも <code>*buf</code> は非 NULL になります。</p>
+<p>存在確認は <code>h5c_exists()</code> ですが、これは「存在しない」と「ハンドルや path が
+不正」の両方で 0 を返します。区別が必要なら <code>h5c_dataset_info()</code> の status を
+見てください。</p>
+<h2 id="型">型</h2>
+<p>数値型は <code>float</code>、<code>double</code>、<code>int8_t</code>、<code>int16_t</code>、<code>int32_t</code>、<code>int64_t</code> です。
+型指定には対応する <code>H5C_F32</code> / <code>H5C_F64</code> / <code>H5C_I8</code> / <code>H5C_I16</code> /
+<code>H5C_I32</code> / <code>H5C_I64</code> を使います。保存形式は <a href="../format/#データ型">FORMAT.md</a>、
+配列の shape は <a href="../format/#次元順序">次元順序</a> を参照してください。</p>
+<p><code>bool</code> には <code>h5c_bool_t</code> と <code>H5C_TRUE</code> / <code>H5C_FALSE</code> を使ってください。</p>
+<pre><code class="language-c">h5c_bool_t flags[4] = { H5C_TRUE, H5C_FALSE, H5C_FALSE, H5C_TRUE };
+h5c_write_bool(f, &quot;/flags&quot;, flags, 2, (size_t[]){ 2, 2 });
+</code></pre>
+<p>0 / 1 以外の値は検証・正規化されません。</p>
+<h3 id="ゼロ長-extent">ゼロ長 extent</h3>
+<p>要素数 0 は正当です。<code>buf</code> は <code>NULL</code> でよく、転送は省略されます。</p>
+<pre><code class="language-c">size_t empty[2] = { 0, 3 };
+h5c_write_f64(f, &quot;/empty&quot;, NULL, 2, empty);   /* {0,3} の dataset ができる */
+</code></pre>
+<h2 id="文字列">文字列</h2>
+<pre><code class="language-c">h5c_write_string(f, &quot;/text/title&quot;, &quot;flow field&quot;, H5C_WRITE_DEFAULT);
+
+char *value = NULL;
+h5c_read_string(f, &quot;/text/title&quot;, &amp;value);
+printf(&quot;%s\n&quot;, value);
+h5c_free_string(value);
+</code></pre>
+<p>読み込みは末尾の空白を除去します。可変長で書く場合は次を使います。
+保存形式と相互運用の制約は <a href="../format/#データ型">FORMAT.md</a> を参照してください。</p>
+<pre><code class="language-c">h5c_write_string_vlen(f, &quot;/text/note&quot;, &quot;...&quot;, H5C_WRITE_DEFAULT);
+</code></pre>
+<h2 id="属性">属性</h2>
+<p>対象は dataset、group、root group（<code>"/"</code>）です。</p>
+<pre><code class="language-c">h5c_write_attr_str(f, &quot;/rank/two&quot;, &quot;units&quot;, &quot;m/s&quot;);
+h5c_write_attr_str(f, &quot;/&quot;, &quot;created_by&quot;, &quot;solver v2&quot;);
+
+double t = 0.125;
+h5c_write_attr_scalar(f, &quot;/&quot;, &quot;time&quot;, &amp;t, H5C_F64);
+
+char *units = NULL;
+h5c_read_attr_str(f, &quot;/rank/two&quot;, &quot;units&quot;, &amp;units);
+h5c_free_string(units);
+
+double got = 0.0;
+h5c_read_attr_scalar(f, &quot;/&quot;, &quot;time&quot;, &amp;got, H5C_F64);
+</code></pre>
+<p>同名の属性は置き換えられます。数値配列属性には <code>h5c_write_attr_array()</code> /
+<code>h5c_read_attr_array()</code>、要素数の問い合わせには <code>h5c_attr_length()</code> を使います。
+スカラー属性にも使え、要素数は1です。保存形式と用途は
+<a href="../format/#数値配列属性">FORMAT.md</a> を参照してください。</p>
+<h2 id="多成分フィールドベクトルテンソル">多成分フィールド（ベクトル・テンソル）</h2>
+<p>ソルバーが <code>u</code>, <code>v</code>, <code>w</code> を別々に持っていても、そのまま渡せます。
+成分の配置と順序は <a href="../format/#多成分フィールド">FORMAT.md</a> を参照してください。</p>
+<pre><code class="language-c">const double *comps[3] = { u, v, w };
+h5c_write_interleaved_f64(f, &quot;/fields/velocity&quot;, comps, 3, npoints);
+
+double *out[3] = { gu, gv, gw };
+h5c_read_interleaved_f64(f, &quot;/fields/velocity&quot;, out, 3, npoints);
+</code></pre>
+<p>1 成分だけ欲しいときは、他の成分を一切読みません。</p>
+<pre><code class="language-c">h5c_read_component_f64(f, &quot;/fields/velocity&quot;, v_only, 1, npoints);
+</code></pre>
+<p>成分配列の書き込みに使う一時バッファの上限を変更できます。</p>
+<pre><code class="language-c">h5c_set_pack_limit(64u * 1024u * 1024u);   /* 既定は 256 MiB */
+</code></pre>
+<h3 id="注意">注意</h3>
+<p>各成分のバッファは少なくとも <code>n</code> 要素必要です。長さは検証されません。
+<code>ncomp == 0</code> はエラーです。<code>n == 0</code> なら成分ポインタは <code>NULL</code> でも構いません。</p>
+<h2 id="エラー処理">エラー処理</h2>
+<pre><code class="language-c">h5c_status_t st = h5c_read_f64(f, &quot;/maybe&quot;, buf, 1, &amp;n);
+if (st == H5C_ERR_NOT_FOUND) {
+    /* 無くてもよいケース */
+} else if (st != H5C_OK) {
+    const h5c_error_t *e = h5c_last_error();
+    fprintf(stderr, &quot;%s: %s (herr=%ld)\n&quot;,
+            h5c_status_string(st), e-&gt;message, e-&gt;hdf5_err);
+}
+</code></pre>
+<p><code>h5c_last_error()</code> は thread-local で、次に同じスレッドで失敗するまで有効です。</p>
+<p>ファイルは <strong>最初の非ゼロエラーを保持する sticky status</strong> も持ちます。
+戻り値を毎回見ない書き方をする場合に使ってください。</p>
+<pre><code class="language-c">h5c_status_t failed = h5c_file_status(f);   /* 何か失敗していたか */
+h5c_status_t closed = h5c_close(f);         /* close は成功したか */
+</code></pre>
+<p><code>h5c_close()</code> は close 自体の成否だけを返し、ハンドルを解放します。
+過去のエラーは close 前に確認してください。処理済みのエラーを消すには、
+ハンドルが有効な間に <code>h5c_file_clear_status(f)</code> を呼びます。</p>
+<h2 id="parallel-io">Parallel I/O</h2>
+<p><code>h5c/h5c_mpi.h</code> を include します。MPI の宣言はこのヘッダーと
+可視化の <code>h5c/h5c_viz_mpi.h</code> に分離されています。</p>
+<pre><code class="language-c">#include &lt;h5c/h5c_mpi.h&gt;
+
+size_t ldims[2] = { nlocal, 3 };     /* ldims[0] が分割方向。0 でもよい */
+
+h5c_file_t *f = NULL;
+h5c_popen(&quot;out.h5&quot;, H5C_TRUNCATE, &amp;f);                     /* MPI_COMM_WORLD */
+h5c_pwrite(f, &quot;/coords&quot;, local, H5C_F64, 2, ldims, H5C_WRITE_DEFAULT);
+h5c_close(f);
+</code></pre>
+<p>communicator と MPI-IO ヒントを指定する形もあります。</p>
+<pre><code class="language-c">h5c_popen_comm(&quot;out.h5&quot;, H5C_READWRITE, my_comm, my_info, &amp;f);
+</code></pre>
+<h3 id="分割の規則">分割の規則</h3>
+<p>保存レイアウトは <a href="../format/#parallel-の分割レイアウト">FORMAT.md</a> を参照してください。</p>
+<p><code>dims[0]</code> はランクごとに違ってよく、0 も許されます。それ以外の次元は
+全ランクで一致していなければなりません。</p>
+<h3 id="自分の担当範囲を知る">自分の担当範囲を知る</h3>
+<pre><code class="language-c">size_t offset = 0, mine = 0;
+h5c_poffset(f, &quot;/coords&quot;, &amp;offset, &amp;mine);
+
+size_t count = 0;
+h5c_ppartition(f, &quot;/coords&quot;, NULL, 0, &amp;count);       /* 長さを問い合わせる */
+int64_t *bounds = malloc(count * sizeof *bounds);
+h5c_ppartition(f, &quot;/coords&quot;, bounds, count, NULL);   /* 全ランクの境界 */
+free(bounds);
+</code></pre>
+<p><code>h5c_pdataset_info()</code> は形状（ローカルとグローバル）を返しますが、
+<strong>開始位置は返しません</strong>。<code>__partition__</code> を自分で開く必要はありません。</p>
+<h3 id="collective-の規律">collective の規律</h3>
+<p>並列 open・close・読み書き・形状と担当範囲の問い合わせは collective です。
+全ランクが同じ順序で同じパスに対して呼びます。MPI は open 前に初期化し、
+close 後に終了してください。MPI プログラムはジョブスクリプトから実行します。</p>
+<p>転送は既定で collective です。切り替えは明示的にのみ行われます。</p>
+<pre><code class="language-c">h5c_pset_collective(f, 0);   /* independent へ */
+</code></pre>
+<p><code>h5c_pset_collective()</code> はローカルな設定ですが、全ランクで同じ値にしてください。</p>
+<p><code>h5c_is_parallel()</code> は <code>h5c/h5c.h</code> にあるので、<code>mpi.h</code> を含まないコードからも
+並列ハンドルかどうかを判定できます。</p>
+<h3 id="分散インターリーブ">分散インターリーブ</h3>
+<pre><code class="language-c">const double *comps[3] = { u, v, w };
+h5c_pwrite_interleaved(f, &quot;/fields/velocity&quot;, (const void *const *)comps,
+                       3, nlocal, H5C_F64, H5C_WRITE_DEFAULT);
+</code></pre>
+<p>行数 0 のランクも同じ呼び出しに参加します。</p>
+<h3 id="読み込み条件">読み込み条件</h3>
+<p><code>h5c_pread()</code> は保存時と同じ MPI プロセス数で使います。
+保存された境界配列の長さ・先頭・単調性・全体長が不正な場合は読み込みに失敗します。
+通常の dataset から任意の連続行を読むには <code>h5c_pread_rows()</code> を使います。
+これは保存済み partition を参照せず、offset とローカル shape を指定します。</p>
+<h2 id="可視化と制約">可視化と制約</h2>
+<p>メッシュの出力手順は <a href="../usage-visualization/">USAGE-visualization.md</a> を参照してください。
+chunking・圧縮と分散文字列配列の I/O は未対応です。</p></div>
+</main>
+
+<footer>
+  h5fortran · h5c · h5cpp · h5xdmf
+</footer>
+
+</body>
+</html>

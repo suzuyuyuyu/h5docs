@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>h5cpp / USAGE-visualization — h5</title>
+<link rel="stylesheet" href="../../../assets/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href="../../.././">h5</a>
+    <nav>
+      <a href="../../.././">はじめに</a>
+      <a href="../../../install/">インストール</a>
+      <a href="../../../usage/">使い方</a>
+      <a href="../../../visualization/">可視化</a>
+      <a href="../../../reference/" aria-current="page">リファレンス</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+<p>出典：<code>h5cpp/docs/USAGE-visualization.md</code></p><div class="reference"><h1 id="h5cpp-の可視化出力">h5cpp の可視化出力</h1>
+<p><code>h5cpp</code> から可視化用の HDF5 を書く方法を扱います。API 全般は
+<a href="../usage/">USAGE.md</a>、ファイル形式は
+<a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/FORMAT.md">h5c の FORMAT.md</a>
+を参照してください。</p>
+<p>XDMF は h5cpp では生成しません。HDF5 を出力したあと、独立ツールの
+<a href="https://github.com/suzuyuyuyu/h5xdmf">h5xdmf</a> で XDMF3 に変換します。</p>
+<h2 id="二つのライター">二つのライター</h2>
+<table>
+<thead>
+<tr>
+<th>型</th>
+<th>ヘッダー</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>h5cpp::viz</code></td>
+<td><code>h5cpp/h5cpp_viz.hpp</code></td>
+<td>逐次出力</td>
+</tr>
+<tr>
+<td><code>h5cpp::parallel_viz</code></td>
+<td><code>h5cpp/h5cpp_viz_mpi.hpp</code></td>
+<td>並列出力、communicator を取る</td>
+</tr>
+</tbody>
+</table>
+<p><code>parallel_viz</code> は <code>viz</code> を継承し、<strong>communicator を受け取るコンストラクタだけを
+追加しています</strong>。書き込み・<code>offsets()</code>・<code>close()</code> はすべて継承したものなので、
+構築したあとの使い方は同一です。並列ビルドでは両方を同時に使えます。</p>
+<h2 id="逐次出力">逐次出力</h2>
+<pre><code class="language-cpp">#include &lt;h5cpp/h5cpp_viz.hpp&gt;
+
+h5cpp::viz out(&quot;result/seq000000.h5&quot;, time);
+h5cpp::viz_mesh mesh{h5cpp::viz_kind::unstructured, &quot;fluid&quot;,
+                     &quot;Tetrahedron&quot;, 4, npoints, ncells};
+out.begin_mesh(mesh);
+out.write_nodes&lt;double&gt;({x, y, z});        // 各成分は vector または span
+out.write_connectivity(connectivity);      // 整数 vector
+out.write_point_data&lt;double&gt;(&quot;Velocity&quot;, {u, v, w});
+out.close();
+</code></pre>
+<p><code>write_nodes()</code>、<code>write_point_data()</code>、<code>write_cell_data()</code> は、平坦な vector、
+ポインタ、成分ごとの span を受け取ります。平坦な field を渡す場合は成分数も
+指定します。<code>write_connectivity()</code> も同じ入力形式に対応します。</p>
+<p><code>offsets()</code> は現在のメッシュの point / cell offset、<code>status()</code> は最初の失敗を
+返します。</p>
+<h2 id="並列出力">並列出力</h2>
+<p>ヘッダーと型を変えるだけで、以降の呼び出しは逐次と同じです。</p>
+<pre><code class="language-cpp">#include &lt;h5cpp/h5cpp_viz_mpi.hpp&gt;
+
+h5cpp::parallel_viz out(&quot;result/seq000000.h5&quot;, time, comm, info);
+</code></pre>
+<p><code>comm</code> の既定値は <code>MPI_COMM_WORLD</code>、<code>info</code> は <code>MPI_INFO_NULL</code> です。
+<code>status()</code> を除く I/O 操作は collective なので、全ランクが同じ順序で
+同じ名前に対して呼びます。</p>
+<p>メッシュの入力条件、節点番号の扱い、点群の扱いは
+<a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/USAGE-visualization.md#メッシュとバッファ">h5c の可視化ガイド</a>
+を参照してください。ランクローカルな 0 始まりの connectivity を渡し、
+ライターがオフセットを加える点は h5c と同じです。</p>
+<h2 id="所有権">所有権</h2>
+<p>デストラクタは例外を投げずに閉じます。閉じる際の失敗を検出するには、
+明示的に <code>close()</code> を呼んでください。並列オブジェクトは全ランクで close を
+そろえ、MPI の終了前に破棄します。</p>
+<h2 id="旧-api-からの移行">旧 API からの移行</h2>
+<p><code>viz</code> と <code>parallel_viz</code> が別の型になったため、以前の呼び出しは書き換えが必要です。</p>
+<table>
+<thead>
+<tr>
+<th>旧</th>
+<th>新</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>viz(path, time, comm)</code></td>
+<td><code>parallel_viz(path, time, comm)</code></td>
+</tr>
+<tr>
+<td>並列用途での <code>viz(path, time)</code></td>
+<td><code>parallel_viz(path, time)</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>h5cpp_viz.hpp</code> は MPI ヘッダーを読み込まなくなったので、並列出力を使うコードは
+<code>h5cpp_viz_mpi.hpp</code> を include してください。</p>
+<h2 id="次に読むもの">次に読むもの</h2>
+<ul>
+<li><a href="https://github.com/suzuyuyuyu/h5cpp/blob/main/example/README.md">使用例</a> — 動作するプログラム</li>
+<li><a href="https://github.com/suzuyuyuyu/h5c/blob/main/docs/USAGE-visualization.md#後処理">後処理</a> — XDMF の生成手順</li>
+</ul></div>
+</main>
+
+<footer>
+  h5fortran · h5c · h5cpp · h5xdmf
+</footer>
+
+</body>
+</html>

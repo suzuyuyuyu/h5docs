@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>h5 — HDF5 出力ライブラリ</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <a class="wordmark" href="./">h5</a>
+    <nav>
+      <a href="./" aria-current="page">はじめに</a>
+      <a href="install/">インストール</a>
+      <a href="usage/">使い方</a>
+      <a href="visualization/">可視化</a>
+      <a href="reference/">リファレンス</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+
+<h1>数値解析の結果を HDF5 で出し、ParaView で見る</h1>
+
+<p class="lede">
+Fortran・C・C++ 用の HDF5 ラッパーと、その出力を ParaView 用の XDMF に変換する
+ツールです。4 つとも同じファイル形式を共有しているので、どの言語で書いても
+同じ後処理が使えます。
+</p>
+
+<h2>どれを使うか</h2>
+
+<p>ソルバーを書いている言語で選びます。可視化する場合はこれに h5xdmf が加わります。</p>
+
+<div class="routes">
+  <a class="route" data-lang="fortran" href="usage/">
+    <div class="route-lang">Fortran</div>
+    <div class="route-name">h5fortran</div>
+    <p>HDF5 の Fortran インターフェースのラッパー。</p>
+  </a>
+  <a class="route" data-lang="c" href="usage/">
+    <div class="route-lang">C</div>
+    <div class="route-name">h5c</div>
+    <p>HDF5 の C API のラッパー。平坦バッファと明示的な shape で扱います。</p>
+  </a>
+  <a class="route" data-lang="cpp" href="usage/">
+    <div class="route-lang">C++</div>
+    <div class="route-name">h5cpp</div>
+    <p>h5c の薄いラッパー。RAII、<code>std::vector</code>、例外で扱えます。</p>
+  </a>
+  <a class="route" data-lang="python" href="visualization/">
+    <div class="route-lang">Python</div>
+    <div class="route-name">h5xdmf</div>
+    <p>出力した HDF5 から XDMF を生成します。可視化するなら必ず使います。</p>
+  </a>
+</div>
+
+<div class="note">
+<strong>言語をまたいでも同じファイルです。</strong>
+Fortran で書いた結果を C から読む、C++ の出力を h5fortran 利用者と共有する、
+といったことができます。<a href="usage/#dims">配列の次元順序</a>だけは
+言語ごとに見え方が違うので、そこは必ず読んでください。
+</div>
+
+<h2>HDF5 とは</h2>
+
+<p>
+数値データを 1 つのファイルに階層構造で格納する形式です。ディレクトリのように
+group を作り、その中に配列を dataset として置きます。テキスト出力と違って
+精度が落ちず、大きな配列でも速く、並列に書けます。
+</p>
+
+<p>
+HDF5 自体は「配列が入った箱」でしかありません。<strong>どの配列が座標で、
+どれが物理量で、どういうメッシュなのかを HDF5 は知りません。</strong>
+可視化ソフトに渡すには、その対応関係を別途伝える必要があります。
+</p>
+
+<h2>なぜ XDMF が要るのか</h2>
+
+<p>
+XDMF は「この HDF5 のこの dataset が節点座標で、これが接続情報で、これが圧力」
+という対応を書いた XML です。ParaView はこの XML を開き、実データは HDF5 から
+読みます。データは複製されません。
+</p>
+
+<p>
+このプロジェクトでは、<strong>ライブラリ側は HDF5 だけを出力し、XDMF の生成は
+h5xdmf に任せます</strong>。Fortran や C から XML を組み立てずに済みます。
+</p>
+
+<h2>1 ステップ 1 ファイル</h2>
+
+<p>
+時系列は 1 つの時刻を 1 つの HDF5 ファイルに書きます
+（<code>seq000000.h5</code>, <code>seq000001.h5</code>, …）。
+</p>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>利点</th><th>内容</th></tr></thead>
+  <tbody>
+    <tr><td>途中で落ちても残る</td><td>計算が異常終了しても、それまでのステップは完全なファイルとして読めます。</td></tr>
+    <tr><td>途中から見られる</td><td>計算の実行中に、書き終わったステップだけを可視化できます。</td></tr>
+    <tr><td>不要なステップを消せる</td><td>ファイルを削除するだけです。</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+h5xdmf はこれらをまとめて 1 つの時系列として扱う XDMF を生成します。
+ファイル名のゼロ埋め桁数は自由ですが、同じ run の中では揃えてください。
+辞書順が時刻順になります。
+</p>
+
+<h2>次に読むもの</h2>
+
+<ul>
+  <li><a href="install/">インストール</a> — 研究室のクラスタと、手元のマシン</li>
+  <li><a href="usage/">使い方</a> — 書く、読む、並列で書く、可視化用に出す</li>
+  <li><a href="visualization/">可視化</a> — HDF5 を出してから ParaView で開くまで</li>
+  <li><a href="reference/">リファレンス</a> — 各ライブラリの API とファイル形式</li>
+</ul>
+
+</main>
+
+<footer>
+  h5fortran · h5c · h5cpp · h5xdmf
+</footer>
+
+</body>
+</html>
