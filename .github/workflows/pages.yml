@@ -55,6 +55,7 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
@@ -62,6 +63,10 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # Pages must already be enabled with Source = GitHub Actions; see
+      # DEPLOY.md. enablement: true does not help -- creating the Pages site
+      # needs more than GITHUB_TOKEN has, and fails with "Resource not
+      # accessible by integration".
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

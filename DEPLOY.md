@@ -13,11 +13,23 @@
 
 PR を開いた時点では公開しない。レビュー前の内容が公開サイトに出ないようにするため。
 
-## 最初に一度だけ必要な設定
+## 最初に一度だけ必要な設定（手動）
 
-リポジトリの **Settings → Pages → Build and deployment → Source** を
-**GitHub Actions** にする。ここが既定の "Deploy from a branch" のままだと、
-ワークフローは成功しても内容が反映されない。
+**Settings → Pages → Build and deployment → Source** を
+**GitHub Actions** にする。
+
+これは自動化できない。`configure-pages` の `enablement: true` で有効化を
+試みると、Pages サイトの作成が `GITHUB_TOKEN` の権限を超えるため
+`Resource not accessible by integration` で失敗する。`pages: write` は
+デプロイを許すだけで、サイトの新規作成には足りない。
+
+未設定のまま実行すると次で止まる。
+
+```text
+Get Pages site failed. Error: Not Found
+```
+
+設定後に Actions タブから再実行すれば通る。
 
 ## リファレンスの更新
 
